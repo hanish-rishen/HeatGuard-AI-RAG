@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as d3 from 'd3';
-import { 
-  Bell, 
-  Search, 
-  Settings, 
-  LayoutDashboard, 
-  Activity, 
+import {
+  Bell,
+  Search,
+  Settings,
+  LayoutDashboard,
+  Activity,
   Map as MapIcon,
   FileText,
   Briefcase,
@@ -36,15 +36,17 @@ import {
   Menu,
   X
 } from 'lucide-react';
-import { 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer 
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer
 } from 'recharts';
+import { HeatGuardAPI, DistrictData, AnalysisResponse } from './api';
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from './ui';
 
 // --- Types ---
 
@@ -136,7 +138,7 @@ const Logo = ({ collapsed }: { collapsed: boolean }) => (
 );
 
 const NavItem: React.FC<NavItemProps> = ({ icon, label, active, hasSubmenu, collapsed, onClick }) => (
-  <div 
+  <div
     onClick={onClick}
     className={`
       flex items-center py-2.5 rounded-lg mb-1 cursor-pointer transition-all duration-200 border border-transparent 
@@ -147,7 +149,7 @@ const NavItem: React.FC<NavItemProps> = ({ icon, label, active, hasSubmenu, coll
   >
     {active && !collapsed && <div className="w-1 h-5 absolute left-2 bg-sidebar-primary rounded-full" />}
     <div className={`${active ? 'text-sidebar-primary' : 'text-sidebar-foreground/80'} flex-shrink-0`}>
-       {icon}
+      {icon}
     </div>
     <span className={`flex-1 text-sm font-medium whitespace-nowrap transition-all duration-300 ${collapsed ? 'w-0 overflow-hidden opacity-0 hidden' : 'w-auto opacity-100 block'}`}>
       {label}
@@ -167,7 +169,7 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, change, trend, isIncr
     trendText = 'Increasing';
   } else if (trend === 'down') {
     TrendIcon = TrendingDown;
-    trendColor = isIncreaseBad ? 'text-green-500' : 'text-destructive'; 
+    trendColor = isIncreaseBad ? 'text-green-500' : 'text-destructive';
     trendText = 'Decreasing';
   } else {
     trendColor = 'text-gray-500';
@@ -207,6 +209,134 @@ const UploadArea = () => (
   </div>
 );
 
+// --- Simulation Panel Component ---
+
+interface SimulationPanelProps {
+  data: DistrictData;
+  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => void;
+  onRun: () => void;
+  loading: boolean;
+}
+
+const SimulationPanel: React.FC<SimulationPanelProps> = ({ data, onChange, onRun, loading }) => (
+  <div className="bg-card p-6 rounded-2xl border-2 border-border shadow-3d mb-8">
+    <div className="flex justify-between items-center mb-6">
+      <div>
+        <h2 className="text-lg font-bold flex items-center gap-2">
+          <Activity className="text-primary" size={20} />
+          Live Risk Simulator
+        </h2>
+        <p className="text-sm text-muted-foreground/80">Input real-time data to generate AI-driven risk assessments.</p>
+      </div>
+      <button
+        onClick={onRun}
+        disabled={loading}
+        className={`px-6 py-2.5 bg-primary text-primary-foreground font-bold rounded-xl shadow-3d-sm active:translate-y-[1px] active:shadow-none transition-all flex items-center gap-2 ${loading ? 'opacity-70 cursor-not-allowed' : 'hover:opacity-90'}`}
+      >
+        {loading ? <span className="animate-spin">⌛</span> : <Zap size={18} />}
+        {loading ? 'Analyzing...' : 'Run Simulation'}
+      </button>
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="space-y-1">
+        <label className="text-xs font-bold text-muted-foreground uppercase">District Name</label>
+        <Select
+          value={data.district_name}
+          onChange={(val) => onChange({ target: { name: 'district_name', value: val } } as any)}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select District" value={data.district_name} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Adilabad">Adilabad</SelectItem>
+            <SelectItem value="Ahmedabad">Ahmedabad</SelectItem>
+            <SelectItem value="Hyderabad">Hyderabad</SelectItem>
+            <SelectItem value="Karimnagar">Karimnagar</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs font-bold text-muted-foreground uppercase">Max Temp (°C)</label>
+        <input
+          type="number"
+          name="max_temp"
+          value={data.max_temp}
+          onChange={onChange}
+          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-card-foreground ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs font-bold text-muted-foreground uppercase">Relative Humidity (%)</label>
+        <input
+          type="number"
+          name="humidity"
+          value={data.humidity}
+          onChange={onChange}
+          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-card-foreground ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs font-bold text-muted-foreground uppercase">LST (°C)</label>
+        <input
+          type="number"
+          name="lst"
+          value={data.lst}
+          onChange={onChange}
+          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-card-foreground ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs font-bold text-muted-foreground uppercase">% Children</label>
+        <input
+          type="number"
+          name="pct_children"
+          value={data.pct_children}
+          onChange={onChange}
+          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-card-foreground ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs font-bold text-muted-foreground uppercase">% Outdoor Workers</label>
+        <input
+          type="number"
+          name="pct_outdoor_workers"
+          value={data.pct_outdoor_workers}
+          onChange={onChange}
+          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-card-foreground ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs font-bold text-muted-foreground uppercase">% Vulnerable Social</label>
+        <input
+          type="number"
+          name="pct_vulnerable_social"
+          value={data.pct_vulnerable_social}
+          onChange={onChange}
+          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-card-foreground ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs font-bold text-muted-foreground uppercase">Date</label>
+        <input
+          type="date"
+          name="date"
+          value={data.date}
+          onChange={onChange}
+          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+    </div>
+  </div>
+);
+
 // --- D3.js India Map Component ---
 interface IndiaMapUIProps {
   simplified?: boolean;
@@ -235,7 +365,7 @@ const IndiaMapUI: React.FC<IndiaMapUIProps> = ({ simplified = false }) => {
 
         const response = await fetch("https://raw.githubusercontent.com/geohacker/india/master/state/india_telengana.geojson");
         if (!response.ok) throw new Error("Failed to load map data");
-        
+
         const data = await response.json();
 
         const projection = d3.geoMercator()
@@ -246,7 +376,7 @@ const IndiaMapUI: React.FC<IndiaMapUIProps> = ({ simplified = false }) => {
         const pathGenerator = d3.geoPath().projection(projection);
 
         const g = svg.append("g");
-        
+
         g.selectAll("path")
           .data(data.features)
           .enter()
@@ -281,9 +411,9 @@ const IndiaMapUI: React.FC<IndiaMapUIProps> = ({ simplified = false }) => {
           .attr("cy", (d) => projection(d.coords as [number, number])?.[1] || 0)
           .attr("r", (d) => d.radius)
           .attr("fill", (d) => {
-             if (d.risk === 'critical') return "var(--destructive)";
-             if (d.risk === 'severe') return "orange";
-             return "var(--chart-1)";
+            if (d.risk === 'critical') return "var(--destructive)";
+            if (d.risk === 'severe') return "orange";
+            return "var(--chart-1)";
           })
           .attr("opacity", 0.4)
           .style("filter", "url(#glow)")
@@ -305,25 +435,25 @@ const IndiaMapUI: React.FC<IndiaMapUIProps> = ({ simplified = false }) => {
   }, [simplified]);
 
   return (
-    <div 
-      className={`relative w-full h-full bg-card overflow-hidden flex flex-col ${simplified ? '' : 'rounded-2xl border-2 border-border shadow-3d'}`} 
+    <div
+      className={`relative w-full h-full bg-card overflow-hidden flex flex-col ${simplified ? '' : 'rounded-2xl border-2 border-border shadow-3d'}`}
       ref={containerRef}
     >
       {!simplified && (
         <div className="absolute top-4 left-4 right-4 z-10 flex flex-wrap justify-between items-start gap-4 pointer-events-none">
-           <div className="bg-card/90 backdrop-blur-sm p-2 rounded-xl border border-border shadow-lg pointer-events-auto flex items-center gap-2">
-              <Search size={18} className="text-muted-foreground ml-2" />
-              <input className="bg-transparent border-none focus:outline-none text-sm w-48 text-foreground" placeholder="Search region or city..." />
-           </div>
+          <div className="bg-card/90 backdrop-blur-sm p-2 rounded-xl border border-border shadow-lg pointer-events-auto flex items-center gap-2">
+            <Search size={18} className="text-muted-foreground ml-2" />
+            <input className="bg-transparent border-none focus:outline-none text-sm w-48 text-foreground" placeholder="Search region or city..." />
+          </div>
 
-           <div className="flex flex-col gap-2 pointer-events-auto">
-              <div className="bg-card/90 backdrop-blur-sm p-2 rounded-xl border border-border shadow-lg hover:bg-card cursor-pointer hover:scale-105 transition-transform" title="Layers">
-                 <Layers size={20} className="text-foreground" />
-              </div>
-              <div className="bg-card/90 backdrop-blur-sm p-2 rounded-xl border border-border shadow-lg hover:bg-card cursor-pointer hover:scale-105 transition-transform" title="Locate Me">
-                 <Locate size={20} className="text-foreground" />
-              </div>
-           </div>
+          <div className="flex flex-col gap-2 pointer-events-auto">
+            <div className="bg-card/90 backdrop-blur-sm p-2 rounded-xl border border-border shadow-lg hover:bg-card cursor-pointer hover:scale-105 transition-transform" title="Layers">
+              <Layers size={20} className="text-foreground" />
+            </div>
+            <div className="bg-card/90 backdrop-blur-sm p-2 rounded-xl border border-border shadow-lg hover:bg-card cursor-pointer hover:scale-105 transition-transform" title="Locate Me">
+              <Locate size={20} className="text-foreground" />
+            </div>
+          </div>
         </div>
       )}
 
@@ -331,36 +461,36 @@ const IndiaMapUI: React.FC<IndiaMapUIProps> = ({ simplified = false }) => {
         {loading && <div className="absolute inset-0 flex items-center justify-center text-primary animate-pulse font-bold text-xs">Loading Satellite Data...</div>}
         {error && <div className="absolute inset-0 flex items-center justify-center text-destructive font-bold text-xs">{error}</div>}
         <svg ref={svgRef} className={`w-full h-full ${simplified ? '' : 'cursor-grab active:cursor-grabbing'}`}></svg>
-        
+
         {!simplified && (
           <div className="absolute bottom-6 right-6 bg-card/90 backdrop-blur-sm p-4 rounded-xl border border-border shadow-3d-sm pointer-events-none">
-             <h4 className="text-xs font-bold uppercase mb-2">Heat Risk Index</h4>
-             <div className="space-y-2">
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="w-3 h-3 rounded-full bg-destructive animate-pulse"></span> Critical ({'>'}45°C)
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="w-3 h-3 rounded-full bg-orange-500"></span> Severe (40-45°C)
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="w-3 h-3 rounded-full bg-chart-1"></span> Moderate ({'<'}40°C)
-                </div>
-             </div>
+            <h4 className="text-xs font-bold uppercase mb-2">Heat Risk Index</h4>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="w-3 h-3 rounded-full bg-destructive animate-pulse"></span> Critical ({'>'}45°C)
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="w-3 h-3 rounded-full bg-orange-500"></span> Severe (40-45°C)
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="w-3 h-3 rounded-full bg-chart-1"></span> Moderate ({'<'}40°C)
+              </div>
+            </div>
           </div>
         )}
 
         {!simplified && (
           <div className="absolute bottom-6 left-6 right-48">
-             <div className="bg-card/90 backdrop-blur-sm p-3 rounded-xl border border-border shadow-3d-sm flex items-center gap-4">
-                <div className="bg-primary/20 p-2 rounded-lg text-primary cursor-pointer pointer-events-auto">
-                   <Calendar size={18} />
-                </div>
-                <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden relative group cursor-pointer pointer-events-auto">
-                   <div className="absolute top-0 left-0 h-full w-1/3 bg-primary"></div>
-                   <div className="absolute top-1/2 left-1/3 w-3 h-3 bg-white rounded-full -translate-y-1/2 shadow-sm scale-0 group-hover:scale-100 transition-transform"></div>
-                </div>
-                <span className="text-xs font-mono">June 2024</span>
-             </div>
+            <div className="bg-card/90 backdrop-blur-sm p-3 rounded-xl border border-border shadow-3d-sm flex items-center gap-4">
+              <div className="bg-primary/20 p-2 rounded-lg text-primary cursor-pointer pointer-events-auto">
+                <Calendar size={18} />
+              </div>
+              <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden relative group cursor-pointer pointer-events-auto">
+                <div className="absolute top-0 left-0 h-full w-1/3 bg-primary"></div>
+                <div className="absolute top-1/2 left-1/3 w-3 h-3 bg-white rounded-full -translate-y-1/2 shadow-sm scale-0 group-hover:scale-100 transition-transform"></div>
+              </div>
+              <span className="text-xs font-mono">June 2024</span>
+            </div>
           </div>
         )}
       </div>
@@ -384,10 +514,10 @@ const RagEngineView = () => {
     setMessages(prev => [...prev, newMsg]);
     setInput('');
     setTimeout(() => {
-      setMessages(prev => [...prev, { 
-        id: Date.now() + 1, 
-        role: 'ai', 
-        content: 'Retrieving relevant context from "Emergency_Contact_List_v2.xlsx"... \n\nBased on the analysis, the primary contact for Sector 4 electricity board is Mr. Rajesh Kumar (+91 98765 43210).' 
+      setMessages(prev => [...prev, {
+        id: Date.now() + 1,
+        role: 'ai',
+        content: 'Retrieving relevant context from "Emergency_Contact_List_v2.xlsx"... \n\nBased on the analysis, the primary contact for Sector 4 electricity board is Mr. Rajesh Kumar (+91 98765 43210).'
       }]);
     }, 1000);
   };
@@ -396,106 +526,105 @@ const RagEngineView = () => {
     <div className="h-full flex flex-col xl:flex-row gap-6">
       <div className="flex-1 bg-card rounded-2xl border-2 border-border shadow-3d flex flex-col overflow-hidden min-h-[500px]">
         <div className="p-4 border-b border-border bg-muted/10 flex justify-between items-center">
-           <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center text-primary">
-                 <Bot size={24} />
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center text-primary">
+              <Bot size={24} />
+            </div>
+            <div>
+              <h2 className="font-bold text-lg">Knowledge Base Assistant</h2>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground/80">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                Online • Index Updated 5m ago
               </div>
-              <div>
-                <h2 className="font-bold text-lg">Knowledge Base Assistant</h2>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground/80">
-                   <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                   Online • Index Updated 5m ago
-                </div>
-              </div>
-           </div>
+            </div>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar bg-muted/5">
-           {messages.map((msg) => (
-             <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                {msg.role === 'ai' && (
-                  <div className="w-8 h-8 rounded-full bg-primary/20 flex-shrink-0 flex items-center justify-center text-primary mt-1">
-                     <Sparkles size={16} />
-                  </div>
-                )}
-                <div className={`max-w-[85%] sm:max-w-[80%] rounded-2xl p-4 text-sm whitespace-pre-line shadow-sm ${
-                   msg.role === 'user' 
-                   ? 'bg-primary text-primary-foreground rounded-tr-none font-medium' 
-                   : 'bg-card border border-border rounded-tl-none font-medium'
-                }`}>
-                   {msg.content}
+          {messages.map((msg) => (
+            <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {msg.role === 'ai' && (
+                <div className="w-8 h-8 rounded-full bg-primary/20 flex-shrink-0 flex items-center justify-center text-primary mt-1">
+                  <Sparkles size={16} />
                 </div>
-                {msg.role === 'user' && (
-                  <div className="w-8 h-8 rounded-full bg-sidebar-border flex-shrink-0 flex items-center justify-center text-sidebar-foreground mt-1">
-                     <User size={16} />
-                  </div>
-                )}
-             </div>
-           ))}
-           <div ref={chatEndRef} />
+              )}
+              <div className={`max-w-[85%] sm:max-w-[80%] rounded-2xl p-4 text-sm whitespace-pre-line shadow-sm ${msg.role === 'user'
+                ? 'bg-primary text-primary-foreground rounded-tr-none font-medium'
+                : 'bg-card border border-border rounded-tl-none font-medium'
+                }`}>
+                {msg.content}
+              </div>
+              {msg.role === 'user' && (
+                <div className="w-8 h-8 rounded-full bg-sidebar-border flex-shrink-0 flex items-center justify-center text-sidebar-foreground mt-1">
+                  <User size={16} />
+                </div>
+              )}
+            </div>
+          ))}
+          <div ref={chatEndRef} />
         </div>
 
         <div className="p-4 border-t border-border bg-card">
-           <div className="relative flex items-center gap-2">
-              <input 
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                placeholder="Ask a question..."
-                className="w-full bg-muted/30 border-2 border-border rounded-xl pl-4 pr-12 py-3 text-sm focus:outline-none focus:border-primary transition-colors text-foreground placeholder:text-muted-foreground/60"
-              />
-              <button 
-                onClick={handleSend}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity"
-              >
-                 <Send size={16} />
-              </button>
-           </div>
+          <div className="relative flex items-center gap-2">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              placeholder="Ask a question..."
+              className="w-full bg-muted/30 border-2 border-border rounded-xl pl-4 pr-12 py-3 text-sm focus:outline-none focus:border-primary transition-colors text-foreground placeholder:text-muted-foreground/60"
+            />
+            <button
+              onClick={handleSend}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity"
+            >
+              <Send size={16} />
+            </button>
+          </div>
         </div>
       </div>
 
       <div className="w-full xl:w-80 flex flex-col gap-6">
-         <div className="bg-card rounded-2xl border-2 border-border shadow-3d p-4 flex-1">
-            <h3 className="font-bold text-sm mb-4 flex items-center gap-2 text-muted-foreground uppercase tracking-wider">
-               <BrainCircuit size={16} /> Reasoning Process
-            </h3>
-            
-            <div className="space-y-4">
-               <div className="relative pl-4 border-l-2 border-primary/30 pb-4">
-                  <div className="absolute -left-[5px] top-0 w-2 h-2 rounded-full bg-primary"></div>
-                  <div className="text-xs font-bold text-primary mb-1">Query Analysis</div>
-                  <div className="text-xs text-muted-foreground/80">Identified keywords: "temperature", "45 degrees", "residential", "actions".</div>
-               </div>
-               <div className="relative pl-4 border-l-2 border-primary/30 pb-4">
-                  <div className="absolute -left-[5px] top-0 w-2 h-2 rounded-full bg-primary"></div>
-                  <div className="text-xs font-bold text-primary mb-1">Retrieval</div>
-                  <div className="text-xs text-muted-foreground/80">Fetching chunks from 'Heatwave_Response_2024.pdf' (Similarity: 0.92).</div>
-               </div>
-               <div className="relative pl-4 border-l-2 border-primary/30">
-                  <div className="absolute -left-[5px] top-0 w-2 h-2 rounded-full bg-primary animate-pulse"></div>
-                  <div className="text-xs font-bold text-primary mb-1">Synthesis</div>
-                  <div className="text-xs text-muted-foreground/80">Formulating response based on Section 3.2: Critical Response Protocols.</div>
-               </div>
-            </div>
-         </div>
+        <div className="bg-card rounded-2xl border-2 border-border shadow-3d p-4 flex-1">
+          <h3 className="font-bold text-sm mb-4 flex items-center gap-2 text-muted-foreground uppercase tracking-wider">
+            <BrainCircuit size={16} /> Reasoning Process
+          </h3>
 
-         <div className="bg-card rounded-2xl border-2 border-border shadow-3d p-4">
-            <h3 className="font-bold text-sm mb-4 flex items-center gap-2 text-muted-foreground uppercase tracking-wider">
-               <Database size={16} /> Source Context
-            </h3>
-            <div className="space-y-3">
-               {[1, 2].map((i) => (
-                  <div key={i} className="bg-muted/10 border border-border rounded-lg p-3 text-xs hover:bg-muted/20 transition-colors cursor-pointer group">
-                     <div className="font-bold mb-1 flex items-center gap-2 text-secondary">
-                        <FileText size={12} /> Heatwave_Response.pdf
-                     </div>
-                     <p className="line-clamp-2 text-muted-foreground/80 group-hover:text-foreground">
-                        ...immediate activation of cooling centers in residential zones is mandatory when daily max temperature exceeds...
-                     </p>
-                  </div>
-               ))}
+          <div className="space-y-4">
+            <div className="relative pl-4 border-l-2 border-primary/30 pb-4">
+              <div className="absolute -left-[5px] top-0 w-2 h-2 rounded-full bg-primary"></div>
+              <div className="text-xs font-bold text-primary mb-1">Query Analysis</div>
+              <div className="text-xs text-muted-foreground/80">Identified keywords: "temperature", "45 degrees", "residential", "actions".</div>
             </div>
-         </div>
+            <div className="relative pl-4 border-l-2 border-primary/30 pb-4">
+              <div className="absolute -left-[5px] top-0 w-2 h-2 rounded-full bg-primary"></div>
+              <div className="text-xs font-bold text-primary mb-1">Retrieval</div>
+              <div className="text-xs text-muted-foreground/80">Fetching chunks from 'Heatwave_Response_2024.pdf' (Similarity: 0.92).</div>
+            </div>
+            <div className="relative pl-4 border-l-2 border-primary/30">
+              <div className="absolute -left-[5px] top-0 w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+              <div className="text-xs font-bold text-primary mb-1">Synthesis</div>
+              <div className="text-xs text-muted-foreground/80">Formulating response based on Section 3.2: Critical Response Protocols.</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-card rounded-2xl border-2 border-border shadow-3d p-4">
+          <h3 className="font-bold text-sm mb-4 flex items-center gap-2 text-muted-foreground uppercase tracking-wider">
+            <Database size={16} /> Source Context
+          </h3>
+          <div className="space-y-3">
+            {[1, 2].map((i) => (
+              <div key={i} className="bg-muted/10 border border-border rounded-lg p-3 text-xs hover:bg-muted/20 transition-colors cursor-pointer group">
+                <div className="font-bold mb-1 flex items-center gap-2 text-secondary">
+                  <FileText size={12} /> Heatwave_Response.pdf
+                </div>
+                <p className="line-clamp-2 text-muted-foreground/80 group-hover:text-foreground">
+                  ...immediate activation of cooling centers in residential zones is mandatory when daily max temperature exceeds...
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -505,236 +634,245 @@ const RagEngineView = () => {
 const DataSourcesView = () => (
   <div className="h-full flex flex-col gap-6">
     <div className="bg-card p-6 rounded-2xl border-2 border-border shadow-3d flex-shrink-0">
-       <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Database size={24} className="text-secondary"/> Knowledge Base Management</h2>
-       <p className="text-sm text-muted-foreground/80 mb-6">Manage the documents and datasets used by the RAG engine to generate protocols.</p>
-       <UploadArea />
+      <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Database size={24} className="text-secondary" /> Knowledge Base Management</h2>
+      <p className="text-sm text-muted-foreground/80 mb-6">Manage the documents and datasets used by the RAG engine to generate protocols.</p>
+      <UploadArea />
     </div>
 
     <div className="bg-card rounded-2xl border-2 border-border shadow-3d flex-1 overflow-hidden flex flex-col">
-       <div className="p-4 border-b border-border flex justify-between items-center bg-muted/10">
-          <h3 className="font-bold">Indexed Documents</h3>
-          <div className="flex gap-2">
-             <button className="p-2 hover:bg-muted/20 rounded-lg"><Filter size={18}/></button>
-          </div>
-       </div>
-       <div className="overflow-x-auto flex-1 p-0">
-          <table className="w-full text-sm text-left min-w-[600px]">
-             <thead className="bg-muted/5 text-muted-foreground font-medium uppercase text-xs">
-                <tr>
-                   <th className="p-4">Name</th>
-                   <th className="p-4">Type</th>
-                   <th className="p-4">Size</th>
-                   <th className="p-4">Date Uploaded</th>
-                   <th className="p-4 text-right">Actions</th>
-                </tr>
-             </thead>
-             <tbody className="divide-y divide-border/50">
-               {UPLOADED_DOCS.map((doc) => (
-                 <tr key={doc.id} className="hover:bg-muted/5 transition-colors">
-                    <td className="p-4 font-medium flex items-center gap-3">
-                       <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">{doc.type}</div>
-                       {doc.name}
-                    </td>
-                    <td className="p-4 text-muted-foreground">{doc.type}</td>
-                    <td className="p-4 text-muted-foreground">{doc.size}</td>
-                    <td className="p-4 text-muted-foreground">{doc.date}</td>
-                    <td className="p-4 text-right">
-                       <button className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"><Trash2 size={16}/></button>
-                    </td>
-                 </tr>
-               ))}
-             </tbody>
-          </table>
-       </div>
+      <div className="p-4 border-b border-border flex justify-between items-center bg-muted/10">
+        <h3 className="font-bold">Indexed Documents</h3>
+        <div className="flex gap-2">
+          <button className="p-2 hover:bg-muted/20 rounded-lg"><Filter size={18} /></button>
+        </div>
+      </div>
+      <div className="overflow-x-auto flex-1 p-0">
+        <table className="w-full text-sm text-left min-w-[600px]">
+          <thead className="bg-muted/5 text-muted-foreground font-medium uppercase text-xs">
+            <tr>
+              <th className="p-4">Name</th>
+              <th className="p-4">Type</th>
+              <th className="p-4">Size</th>
+              <th className="p-4">Date Uploaded</th>
+              <th className="p-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
+            {UPLOADED_DOCS.map((doc) => (
+              <tr key={doc.id} className="hover:bg-muted/5 transition-colors">
+                <td className="p-4 font-medium flex items-center gap-3">
+                  <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">{doc.type}</div>
+                  {doc.name}
+                </td>
+                <td className="p-4 text-muted-foreground">{doc.type}</td>
+                <td className="p-4 text-muted-foreground">{doc.size}</td>
+                <td className="p-4 text-muted-foreground">{doc.date}</td>
+                <td className="p-4 text-right">
+                  <button className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"><Trash2 size={16} /></button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 );
 
 // --- Reports View ---
 const ReportsView = () => (
-   <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-         <h2 className="text-xl font-bold flex items-center gap-2"><FileText size={24} className="text-chart-1"/> Generated Reports</h2>
-         <button className="bg-primary text-primary-foreground px-4 py-2 rounded-xl font-bold shadow-3d-sm active:translate-y-[1px] active:shadow-none transition-all flex items-center gap-2 w-full sm:w-auto justify-center">
-           <PlusCircle size={18} /> New Report
-         </button>
-      </div>
+  <div className="space-y-6">
+    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <h2 className="text-xl font-bold flex items-center gap-2"><FileText size={24} className="text-chart-1" /> Generated Reports</h2>
+      <button className="bg-primary text-primary-foreground px-4 py-2 rounded-xl font-bold shadow-3d-sm active:translate-y-[1px] active:shadow-none transition-all flex items-center gap-2 w-full sm:w-auto justify-center">
+        <PlusCircle size={18} /> New Report
+      </button>
+    </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-         {REPORTS.map((report) => (
-           <div key={report.id} className="bg-card p-6 rounded-2xl border-2 border-border shadow-3d hover:shadow-3d-hover hover:translate-y-[-4px] transition-all group cursor-pointer">
-              <div className="flex justify-between items-start mb-4">
-                 <div className="w-10 h-10 bg-chart-1/10 text-chart-1 rounded-xl flex items-center justify-center">
-                    <FileText size={20} />
-                 </div>
-                 <span className={`px-2 py-1 rounded-md text-xs font-bold ${report.status === 'Ready' ? 'bg-green-500/10 text-green-500' : 'bg-orange-500/10 text-orange-500'}`}>
-                    {report.status}
-                 </span>
-              </div>
-              <h3 className="font-bold text-lg mb-2 group-hover:text-primary transition-colors">{report.title}</h3>
-              <div className="text-sm text-muted-foreground/80 space-y-1 mb-6">
-                 <p>Generated: {report.date}</p>
-                 <p>Author: {report.author}</p>
-              </div>
-              <button className="w-full border border-border py-2 rounded-lg font-medium text-sm hover:bg-muted/10 flex items-center justify-center gap-2">
-                 <Download size={16} /> Download PDF
-              </button>
-           </div>
-         ))}
-      </div>
-   </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {REPORTS.map((report) => (
+        <div key={report.id} className="bg-card p-6 rounded-2xl border-2 border-border shadow-3d hover:shadow-3d-hover hover:translate-y-[-4px] transition-all group cursor-pointer">
+          <div className="flex justify-between items-start mb-4">
+            <div className="w-10 h-10 bg-chart-1/10 text-chart-1 rounded-xl flex items-center justify-center">
+              <FileText size={20} />
+            </div>
+            <span className={`px-2 py-1 rounded-md text-xs font-bold ${report.status === 'Ready' ? 'bg-green-500/10 text-green-500' : 'bg-orange-500/10 text-orange-500'}`}>
+              {report.status}
+            </span>
+          </div>
+          <h3 className="font-bold text-lg mb-2 group-hover:text-primary transition-colors">{report.title}</h3>
+          <div className="text-sm text-muted-foreground/80 space-y-1 mb-6">
+            <p>Generated: {report.date}</p>
+            <p>Author: {report.author}</p>
+          </div>
+          <button className="w-full border border-border py-2 rounded-lg font-medium text-sm hover:bg-muted/10 flex items-center justify-center gap-2">
+            <Download size={16} /> Download PDF
+          </button>
+        </div>
+      ))}
+    </div>
+  </div>
 );
 
 // --- Dashboard View (Main) ---
-const DashboardView = ({ onViewChange }: { onViewChange: (view: ViewType) => void }) => (
+
+interface DashboardViewProps {
+  onViewChange: (view: ViewType) => void;
+  simulationData: DistrictData;
+  onSimulationChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => void;
+  onRunAnalysis: () => void;
+  analysisResult: AnalysisResponse | null;
+  loading: boolean;
+}
+
+const DashboardView: React.FC<DashboardViewProps> = ({
+  onViewChange,
+  simulationData,
+  onSimulationChange,
+  onRunAnalysis,
+  analysisResult,
+  loading
+}) => (
   <>
-     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <StatCard 
-          title="Avg Temperature" 
-          value="42.5°C" 
-          change="+2.5%" 
-          trend="up"
-          isIncreaseBad={true} 
-        />
-        <StatCard 
-          title="RAG Documents" 
-          value="128" 
-          change="+12" 
-          trend="up" 
-          isIncreaseBad={false}
-        />
-        <StatCard 
-          title="Generated Actions" 
-          value="14" 
-          change="+3" 
-          trend="up" 
-          isIncreaseBad={false}
-        />
-        <StatCard 
-          title="Predicted Hospitalizations" 
-          value="1,245" 
-          change="+15.2%" 
-          trend="up" 
-          isIncreaseBad={true}
-        />
-     </div>
+    <SimulationPanel
+      data={simulationData}
+      onChange={onSimulationChange}
+      onRun={onRunAnalysis}
+      loading={loading}
+    />
 
-     <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 mb-8">
-       {/* Chart Section */}
-       <div className="xl:col-span-8 bg-card text-card-foreground p-6 rounded-2xl border-2 border-border shadow-3d flex flex-col h-[400px]">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-            <div>
-              <h2 className="text-lg font-bold flex items-center gap-2">
-                <Activity className="text-primary" size={20} />
-                Hospitalization Risk Forecast
-              </h2>
-              <p className="text-sm text-muted-foreground/80">AI projection based on current heatwave patterns & RAG data.</p>
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <StatCard
+        title="Avg Temperature"
+        value={analysisResult ? `${simulationData.max_temp}°C` : "42.5°C"}
+        change={analysisResult ? "Simulated" : "+2.5%"}
+        trend="up"
+        isIncreaseBad={true}
+      />
+      <StatCard
+        title="Heat Index (HI)"
+        value={analysisResult ? `${analysisResult.heat_index}°C` : "--"}
+        change={analysisResult ? "Dangerous" : ""}
+        trend="up"
+        isIncreaseBad={true}
+      />
+      <StatCard
+        title="Risk Status"
+        value={analysisResult ? analysisResult.risk_status : "N/A"}
+        change={analysisResult ? analysisResult.distance_from_safe_zone || "" : ""}
+        trend="up"
+        isIncreaseBad={true}
+      />
+      <StatCard
+        title="Predicted Hospitalizations"
+        value={analysisResult ? analysisResult.predicted_hospitalization_load.toFixed(0) : "1,245"}
+        change="+15.2%"
+        trend="up"
+        isIncreaseBad={true}
+      />
+    </div>
+
+    <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 mb-8">
+      {/* Chart Section */}
+      <div className="xl:col-span-8 bg-card text-card-foreground p-6 rounded-2xl border-2 border-border shadow-3d flex flex-col h-[400px]">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+          <div>
+            <h2 className="text-lg font-bold flex items-center gap-2">
+              <Activity className="text-primary" size={20} />
+              Hospitalization Risk Forecast
+            </h2>
+            <p className="text-sm text-muted-foreground/80">AI projection based on current heatwave patterns & RAG data.</p>
+          </div>
+          <div className="flex bg-muted/30 p-1 rounded-xl border border-border/50">
+            <button className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground rounded-lg transition-colors">7 Days</button>
+            <button className="px-3 py-1.5 text-xs font-medium bg-chart-2 text-primary-foreground shadow-sm rounded-lg">30 Days</button>
+          </div>
+        </div>
+        <div className="flex-1 w-full min-w-0 min-h-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={CHART_DATA} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
+              <defs>
+                <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="colorValue2" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--chart-2)" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="var(--chart-2)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" opacity={0.3} />
+              <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }} dy={10} />
+              <YAxis hide domain={[0, 100]} />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: 'var(--card)',
+                  borderColor: 'var(--border)',
+                  borderRadius: 'var(--radius)',
+                  boxShadow: '4px 4px 0px 0px rgba(0,0,0,0.3)',
+                  color: 'var(--card-foreground)'
+                }}
+                itemStyle={{ color: 'var(--foreground)' }}
+              />
+              <Area type="monotone" dataKey="value" stroke="var(--chart-1)" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
+              <Area type="monotone" dataKey="value2" stroke="var(--chart-2)" strokeWidth={3} fillOpacity={1} fill="url(#colorValue2)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Map Quick View */}
+      <div className="xl:col-span-4 bg-card text-card-foreground p-6 rounded-2xl border-2 border-border shadow-3d flex flex-col h-[400px]">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-bold flex items-center gap-2">
+            <MapIcon className="text-primary" size={20} />
+            Risk Overview
+          </h2>
+          <button onClick={() => onViewChange('map')} className="text-xs font-bold text-primary hover:underline flex items-center gap-1">
+            Full Map <ArrowUpRight size={12} />
+          </button>
+        </div>
+        <div className="flex-1 rounded-xl overflow-hidden relative border border-border/30 bg-[#1a2c38]">
+          <IndiaMapUI simplified={true} />
+
+          <div className="absolute bottom-4 left-4 right-4 space-y-2 pointer-events-none">
+            <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-xl backdrop-blur-sm shadow-sm">
+              <div className="text-xs font-bold text-destructive mb-1 flex items-center gap-2">
+                <AlertTriangle size={12} /> CRITICAL
+              </div>
+              <div className="text-xs">Temp {'>'} 45°C in Sector 4.</div>
             </div>
-            <div className="flex bg-muted/30 p-1 rounded-xl border border-border/50">
-               <button className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground rounded-lg transition-colors">7 Days</button>
-               <button className="px-3 py-1.5 text-xs font-medium bg-chart-2 text-primary-foreground shadow-sm rounded-lg">30 Days</button>
-            </div>
           </div>
-          <div className="flex-1 w-full min-w-0 min-h-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={CHART_DATA} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
-                <defs>
-                  <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id="colorValue2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--chart-2)" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="var(--chart-2)" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" opacity={0.3} />
-                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fontSize: 12, fill: 'var(--muted-foreground)'}} dy={10} />
-                <YAxis hide domain={[0, 100]} />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: 'var(--card)', 
-                    borderColor: 'var(--border)', 
-                    borderRadius: 'var(--radius)', 
-                    boxShadow: '4px 4px 0px 0px rgba(0,0,0,0.3)',
-                    color: 'var(--card-foreground)'
-                  }}
-                  itemStyle={{ color: 'var(--foreground)' }}
-                />
-                <Area type="monotone" dataKey="value" stroke="var(--chart-1)" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
-                <Area type="monotone" dataKey="value2" stroke="var(--chart-2)" strokeWidth={3} fillOpacity={1} fill="url(#colorValue2)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-       </div>
+        </div>
+      </div>
+    </div>
 
-       {/* Map Quick View */}
-       <div className="xl:col-span-4 bg-card text-card-foreground p-6 rounded-2xl border-2 border-border shadow-3d flex flex-col h-[400px]">
-          <div className="flex justify-between items-center mb-4">
-             <h2 className="text-lg font-bold flex items-center gap-2">
-               <MapIcon className="text-primary" size={20} />
-               Risk Overview
-             </h2>
-             <button onClick={() => onViewChange('map')} className="text-xs font-bold text-primary hover:underline flex items-center gap-1">
-               Full Map <ArrowUpRight size={12}/>
-             </button>
-          </div>
-          <div className="flex-1 rounded-xl overflow-hidden relative border border-border/30 bg-[#1a2c38]">
-             <IndiaMapUI simplified={true} />
-             
-             <div className="absolute bottom-4 left-4 right-4 space-y-2 pointer-events-none">
-               <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-xl backdrop-blur-sm shadow-sm">
-                  <div className="text-xs font-bold text-destructive mb-1 flex items-center gap-2">
-                     <AlertTriangle size={12}/> CRITICAL
-                  </div>
-                  <div className="text-xs">Temp > 45°C in Sector 4.</div>
-               </div>
-             </div>
-          </div>
-       </div>
-     </div>
-
-     {/* Action Protocols */}
-     <div className="bg-card rounded-2xl border-2 border-border shadow-3d overflow-hidden">
+    {/* Action Protocols */}
+    {analysisResult && (
+      <div className="bg-card rounded-2xl border-2 border-border shadow-3d overflow-hidden">
         <div className="p-6 border-b border-border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-muted/10">
-           <div>
-             <h2 className="text-lg font-bold flex items-center gap-2">
-               <BrainCircuit className="text-chart-3" size={22} />
-               Recommended Actions
-             </h2>
-             <p className="text-sm text-muted-foreground/80">Protocols generated from real-time RAG analysis.</p>
-           </div>
-           <button onClick={() => onViewChange('rag')} className="flex items-center gap-2 px-3 py-2 bg-primary text-primary-foreground text-sm font-bold rounded-xl shadow-3d-sm active:translate-y-[1px] active:shadow-none transition-all w-full sm:w-auto justify-center">
-              <Zap size={16} /> View RAG Insights
-           </button>
+          <div>
+            <h2 className="text-lg font-bold flex items-center gap-2">
+              <BrainCircuit className="text-chart-3" size={22} />
+              Prescriptive Advice ({analysisResult.risk_status})
+            </h2>
+            <p className="text-sm text-muted-foreground/80">{analysisResult.risk_level_description}</p>
+          </div>
+          <button onClick={() => onViewChange('rag')} className="flex items-center gap-2 px-3 py-2 bg-primary text-primary-foreground text-sm font-bold rounded-xl shadow-3d-sm active:translate-y-[1px] active:shadow-none transition-all w-full sm:w-auto justify-center">
+            <Zap size={16} /> View RAG Insights
+          </button>
         </div>
-        <div className="p-0">
-           {ACTION_PROTOCOLS.map((protocol) => (
-             <div key={protocol.id} className="grid grid-cols-1 sm:grid-cols-12 gap-4 p-4 border-b border-border/50 items-center hover:bg-muted/10 transition-colors text-sm last:border-0">
-                <div className="hidden sm:block col-span-1 text-center text-muted-foreground font-mono">0{protocol.id}</div>
-                <div className="col-span-4 font-bold text-foreground">{protocol.title}</div>
-                <div className="col-span-4 text-muted-foreground">{protocol.description}</div>
-                <div className="col-span-2 text-center flex sm:justify-center">
-                  <span className={`px-2 py-1 rounded-md text-xs font-bold border flex items-center gap-1 w-fit sm:w-auto ${
-                    protocol.priority === 'High' ? 'bg-destructive/10 text-destructive border-destructive/20' :
-                    'bg-chart-3/10 text-chart-3 border-chart-3/20'
-                  }`}>
-                    {protocol.priority}
-                  </span>
-                </div>
-                <div className="col-span-1 text-center flex sm:justify-center">
-                   <span className={`text-xs font-medium px-2 py-1 rounded-full ${
-                     protocol.status === 'Completed' ? 'bg-green-500/10 text-green-500' :
-                     protocol.status === 'In Progress' ? 'bg-blue-500/10 text-blue-500' :
-                     'bg-gray-500/10 text-gray-500'
-                   }`}>
-                     {protocol.status}
-                   </span>
-                </div>
-             </div>
-           ))}
+        <div className="p-6 whitespace-pre-line text-sm leading-relaxed">
+          {analysisResult.prescriptive_advice}
         </div>
-     </div>
+        <div className="p-4 bg-muted/5 border-t border-border">
+          <h4 className="text-xs font-bold uppercase text-muted-foreground mb-2">Sources:</h4>
+          {analysisResult.source_documents.map((doc, idx) => (
+            <div key={idx} className="text-xs text-muted-foreground/80 mb-1">• {doc.source} (Similarity: {doc.similarity_score})</div>
+          ))}
+        </div>
+      </div>
+    )}
   </>
 );
 
@@ -743,10 +881,49 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  // --- Simulation State ---
+  const [loading, setLoading] = useState(false);
+  const [simulationData, setSimulationData] = useState<DistrictData>({
+    district_name: 'Adilabad',
+    max_temp: 45.0,
+    lst: 46.5,
+    humidity: 40,
+    pct_children: 12,
+    pct_outdoor_workers: 25,
+    pct_vulnerable_social: 15,
+    date: new Date().toISOString().split('T')[0]
+  });
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResponse | null>(null);
+
+  const handleSimulationChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target;
+    setSimulationData(prev => ({
+      ...prev,
+      [name]: type === 'number' ? parseFloat(value) : value
+    }));
+  };
+
+  const runAnalysis = async () => {
+    setLoading(true);
+    try {
+      // 1. Seed data if needed (just in case it's first run)
+      // await HeatGuardAPI.seedData(); 
+
+      // 2. Run Analysis
+      const result = await HeatGuardAPI.analyzeDistrict(simulationData);
+      setAnalysisResult(result);
+    } catch (err) {
+      console.error("Analysis Failed:", err);
+      alert("Failed to run analysis. Ensure backend is running.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => {
       window.dispatchEvent(new Event('resize'));
-    }, 320); 
+    }, 320);
     return () => clearTimeout(timer);
   }, [isSidebarCollapsed]);
 
@@ -771,18 +948,18 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-sidebar text-foreground font-sans selection:bg-primary/20 overflow-hidden">
-      
+    <div className="flex h-screen w-full bg-sidebar text-foreground font-sans selection:bg-primary/20 overflow-hidden">
+
       {/* Mobile Sidebar Overlay */}
       {isMobileMenuOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/50 z-40 md:hidden"
           onClick={() => setIsMobileMenuOpen(false)}
         />
       )}
 
       {/* Sidebar - Responsive Drawer */}
-      <aside 
+      <aside
         className={`
           fixed inset-y-0 left-0 z-50 h-full bg-sidebar 
           transition-transform duration-300 ease-in-out
@@ -794,7 +971,7 @@ const App: React.FC = () => {
       >
         {/* Mobile Close Button */}
         <div className="absolute top-4 right-4 md:hidden text-sidebar-foreground/50 hover:text-sidebar-foreground cursor-pointer" onClick={() => setIsMobileMenuOpen(false)}>
-           <X size={24} />
+          <X size={24} />
         </div>
 
         {/* Header & Logo */}
@@ -803,8 +980,8 @@ const App: React.FC = () => {
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden">
-          
-          <button 
+
+          <button
             className={`
               w-full bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl shadow-3d-sm active:translate-y-[2px] active:shadow-none mb-8 flex items-center justify-center gap-2 transition-all
               ${isSidebarCollapsed && !isMobileMenuOpen ? 'py-3 px-0 rounded-full aspect-square' : 'py-3 px-4'}
@@ -818,23 +995,23 @@ const App: React.FC = () => {
           <div className="space-y-6">
             <div>
               <div className={`px-3 text-xs font-bold text-sidebar-foreground/70 uppercase tracking-wider mb-2 transition-opacity duration-300 ${isSidebarCollapsed && !isMobileMenuOpen ? 'opacity-0 h-0 overflow-hidden' : 'opacity-100'}`}>Platform</div>
-              <NavItem 
-                icon={<LayoutDashboard size={20} />} 
-                label="Dashboard" 
-                active={currentView === 'dashboard'} 
+              <NavItem
+                icon={<LayoutDashboard size={20} />}
+                label="Dashboard"
+                active={currentView === 'dashboard'}
                 collapsed={isSidebarCollapsed && !isMobileMenuOpen}
                 onClick={() => { setCurrentView('dashboard'); setIsMobileMenuOpen(false); }}
               />
-              <NavItem 
-                icon={<MapIcon size={20} />} 
-                label="Risk Map" 
+              <NavItem
+                icon={<MapIcon size={20} />}
+                label="Risk Map"
                 active={currentView === 'map'}
                 collapsed={isSidebarCollapsed && !isMobileMenuOpen}
                 onClick={() => { setCurrentView('map'); setIsMobileMenuOpen(false); }}
               />
-              <NavItem 
-                icon={<BrainCircuit size={20} />} 
-                label="RAG Engine" 
+              <NavItem
+                icon={<BrainCircuit size={20} />}
+                label="RAG Engine"
                 active={currentView === 'rag'}
                 collapsed={isSidebarCollapsed && !isMobileMenuOpen}
                 onClick={() => { setCurrentView('rag'); setIsMobileMenuOpen(false); }}
@@ -843,22 +1020,22 @@ const App: React.FC = () => {
 
             <div>
               <div className={`px-3 text-xs font-bold text-sidebar-foreground/70 uppercase tracking-wider mb-2 mt-4 transition-opacity duration-300 ${isSidebarCollapsed && !isMobileMenuOpen ? 'opacity-0 h-0 overflow-hidden' : 'opacity-100'}`}>Knowledge Base</div>
-              <NavItem 
-                icon={<Briefcase size={20} />} 
-                label="Data Sources" 
+              <NavItem
+                icon={<Briefcase size={20} />}
+                label="Data Sources"
                 active={currentView === 'datasources'}
                 collapsed={isSidebarCollapsed && !isMobileMenuOpen}
                 onClick={() => { setCurrentView('datasources'); setIsMobileMenuOpen(false); }}
               />
-              <NavItem 
-                icon={<FileText size={20} />} 
-                label="Reports" 
+              <NavItem
+                icon={<FileText size={20} />}
+                label="Reports"
                 active={currentView === 'reports'}
                 collapsed={isSidebarCollapsed && !isMobileMenuOpen}
                 onClick={() => { setCurrentView('reports'); setIsMobileMenuOpen(false); }}
               />
               <div className={`px-3 py-2 text-sm text-sidebar-foreground/80 cursor-pointer hover:text-sidebar-foreground flex items-center gap-2 ${isSidebarCollapsed && !isMobileMenuOpen ? 'justify-center w-full' : ''}`}>
-                <MoreVertical size={16} /> 
+                <MoreVertical size={16} />
                 {(!isSidebarCollapsed || isMobileMenuOpen) && "More"}
               </div>
             </div>
@@ -866,31 +1043,31 @@ const App: React.FC = () => {
         </div>
 
         <div className="p-4 space-y-1">
-           <NavItem icon={<Settings size={20} />} label="Settings" collapsed={isSidebarCollapsed && !isMobileMenuOpen} />
-           <NavItem icon={<LifeBuoy size={20} />} label="Support" collapsed={isSidebarCollapsed && !isMobileMenuOpen} />
+          <NavItem icon={<Settings size={20} />} label="Settings" collapsed={isSidebarCollapsed && !isMobileMenuOpen} />
+          <NavItem icon={<LifeBuoy size={20} />} label="Support" collapsed={isSidebarCollapsed && !isMobileMenuOpen} />
         </div>
 
         <div className="p-4 mx-2 mb-2 flex flex-col gap-2">
           <div className={`flex items-center gap-3 cursor-pointer p-2 rounded-xl hover:bg-sidebar-accent/10 transition-colors ${isSidebarCollapsed && !isMobileMenuOpen ? 'justify-center w-full' : ''}`}>
-             <div className="w-9 h-9 flex-shrink-0 rounded-full bg-sidebar-border text-sidebar-foreground flex items-center justify-center shadow-sm">
-                <User size={18} />
-             </div>
-             <div className={`flex-1 overflow-hidden transition-all duration-300 ${(isSidebarCollapsed && !isMobileMenuOpen) ? 'w-0 opacity-0 absolute' : 'w-auto opacity-100'}`}>
-                <div className="text-sm font-medium text-sidebar-foreground truncate">HeatGuard Admin</div>
-                <div className="text-xs text-sidebar-foreground/50 truncate">admin@heatguard.ai</div>
-             </div>
-             {(!isSidebarCollapsed || isMobileMenuOpen) && <Settings size={14} className="text-sidebar-foreground/50 flex-shrink-0" />}
+            <div className="w-9 h-9 flex-shrink-0 rounded-full bg-sidebar-border text-sidebar-foreground flex items-center justify-center shadow-sm">
+              <User size={18} />
+            </div>
+            <div className={`flex-1 overflow-hidden transition-all duration-300 ${(isSidebarCollapsed && !isMobileMenuOpen) ? 'w-0 opacity-0 absolute' : 'w-auto opacity-100'}`}>
+              <div className="text-sm font-medium text-sidebar-foreground truncate">HeatGuard Admin</div>
+              <div className="text-xs text-sidebar-foreground/50 truncate">admin@heatguard.ai</div>
+            </div>
+            {(!isSidebarCollapsed || isMobileMenuOpen) && <Settings size={14} className="text-sidebar-foreground/50 flex-shrink-0" />}
           </div>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 bg-background shadow-2xl p-4 md:p-6 overflow-y-auto relative scroll-smooth w-full my-4 mr-4 ml-0 rounded-3xl h-auto">
+      <main className="flex-1 bg-background shadow-2xl p-4 md:p-6 overflow-y-auto relative scroll-smooth w-full my-4 mr-4 ml-0 rounded-3xl h-[calc(100%-2rem)]">
         {/* Top Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
           <div className="flex items-center gap-2 text-muted-foreground text-sm w-full md:w-auto">
             {/* Sidebar Toggle Button */}
-            <button 
+            <button
               onClick={toggleSidebar}
               className="bg-card p-2 rounded-lg border-2 border-border shadow-sm text-foreground hover:bg-sidebar-accent/10 transition-colors flex-shrink-0"
               title={isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
@@ -902,23 +1079,32 @@ const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3 w-full md:w-auto justify-end">
-             <div className="relative w-full md:w-auto">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-                <input 
-                  type="text" 
-                  placeholder="Search..." 
-                  className="bg-card border-2 border-border rounded-xl pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 shadow-3d-sm w-full md:w-64 placeholder:text-muted-foreground/60"
-                />
-             </div>
-             <button className="p-2 bg-card border-2 border-border rounded-xl shadow-3d-sm hover:translate-y-[-1px] transition-all relative hover:shadow-3d-hover flex-shrink-0">
-                <Bell size={20} />
-                <span className="absolute top-1 right-2 w-2 h-2 bg-destructive rounded-full"></span>
-             </button>
+            <div className="relative w-full md:w-auto">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
+              <input
+                type="text"
+                placeholder="Search..."
+                className="bg-card border-2 border-border rounded-xl pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 shadow-3d-sm w-full md:w-64 placeholder:text-muted-foreground/60"
+              />
+            </div>
+            <button className="p-2 bg-card border-2 border-border rounded-xl shadow-3d-sm hover:translate-y-[-1px] transition-all relative hover:shadow-3d-hover flex-shrink-0">
+              <Bell size={20} />
+              <span className="absolute top-1 right-2 w-2 h-2 bg-destructive rounded-full"></span>
+            </button>
           </div>
         </div>
 
         {/* View Switcher */}
-        {currentView === 'dashboard' && <DashboardView onViewChange={setCurrentView} />}
+        {currentView === 'dashboard' && (
+          <DashboardView
+            onViewChange={setCurrentView}
+            simulationData={simulationData}
+            onSimulationChange={handleSimulationChange}
+            onRunAnalysis={runAnalysis}
+            analysisResult={analysisResult}
+            loading={loading}
+          />
+        )}
         {currentView === 'map' && <IndiaMapUI />}
         {currentView === 'rag' && <RagEngineView />}
         {currentView === 'datasources' && <DataSourcesView />}

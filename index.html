@@ -1,166 +1,164 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HeatGuard AI</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-      :root {
-        /* Primary Theme Colors */
-        --background: #1c2433;
-        --foreground: #e5e5e5;
-        --primary: #e05d38;
-        --primary-foreground: #ffffff;
-        
-        /* Secondary & Accent Colors */
-        --secondary: #2a303e;
-        --secondary-foreground: #e5e5e5;
-        --accent: #2a3656;
-        --accent-foreground: #bfdbfe;
-        
-        /* UI Component Colors */
-        --card: #2a3040;
-        --card-foreground: #e5e5e5;
-        --popover: #262b38;
-        --popover-foreground: #e5e5e5;
-        --muted: #2a303e;
-        --muted-foreground: #a3a3a3;
-        
-        /* Utility & Form Colors */
-        --border: #3d4354;
-        --input: #3d4354;
-        --ring: #e05d38;
-        
-        /* Status & Feedback Colors */
-        --destructive: #ef4444;
-        --destructive-foreground: #ffffff;
-        
-        /* Chart & Visualization Colors */
-        --chart-1: #86a7c8;
-        --chart-2: #e6a08f;
-        --chart-3: #5a7ca6;
-        --chart-4: #466494;
-        --chart-5: #334c82;
-        
-        /* Sidebar & Navigation Colors */
-        --sidebar: #2a303f;
-        --sidebar-foreground: #e5e5e5;
-        --sidebar-primary: #e05d38;
-        --sidebar-primary-foreground: #ffffff;
-        --sidebar-accent: #2a3656;
-        --sidebar-accent-foreground: #bfdbfe;
-        --sidebar-border: #3d4354;
-        --sidebar-ring: #e05d38;
-        
-        --radius: 0.5rem;
-      }
 
-      body {
-        font-family: 'JetBrains Mono', monospace;
-        background-color: var(--background);
-        color: var(--foreground);
-        letter-spacing: 0px;
-      }
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HeatGuard AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      /* Primary Theme Colors */
+      --background: #1c2433;
+      --foreground: #e5e5e5;
+      --primary: #e05d38;
+      --primary-foreground: #ffffff;
 
-      /* Custom Scrollbar */
-      ::-webkit-scrollbar {
-          width: 8px;
-          height: 8px;
-      }
-      ::-webkit-scrollbar-track {
-          background: transparent; 
-      }
-      ::-webkit-scrollbar-thumb {
-          background: var(--muted-foreground); 
-          border-radius: 4px;
-          opacity: 0.2;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-          opacity: 0.4;
-      }
-    </style>
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            colors: {
-              background: 'var(--background)',
-              foreground: 'var(--foreground)',
-              card: 'var(--card)',
-              'card-foreground': 'var(--card-foreground)',
-              popover: 'var(--popover)',
-              'popover-foreground': 'var(--popover-foreground)',
-              primary: 'var(--primary)',
-              'primary-foreground': 'var(--primary-foreground)',
-              secondary: 'var(--secondary)',
-              'secondary-foreground': 'var(--secondary-foreground)',
-              muted: 'var(--muted)',
-              'muted-foreground': 'var(--muted-foreground)',
-              accent: 'var(--accent)',
-              'accent-foreground': 'var(--accent-foreground)',
-              destructive: 'var(--destructive)',
-              'destructive-foreground': 'var(--destructive-foreground)',
-              border: 'var(--border)',
-              input: 'var(--input)',
-              ring: 'var(--ring)',
-              chart: {
-                1: 'var(--chart-1)',
-                2: 'var(--chart-2)',
-                3: 'var(--chart-3)',
-                4: 'var(--chart-4)',
-                5: 'var(--chart-5)'
-              },
-              sidebar: {
-                DEFAULT: 'var(--sidebar)',
-                foreground: 'var(--sidebar-foreground)',
-                primary: 'var(--sidebar-primary)',
-                'primary-foreground': 'var(--sidebar-primary-foreground)',
-                accent: 'var(--sidebar-accent)',
-                'accent-foreground': 'var(--sidebar-accent-foreground)',
-                border: 'var(--sidebar-border)',
-                ring: 'var(--sidebar-ring)'
-              }
+      /* Secondary & Accent Colors */
+      --secondary: #2a303e;
+      --secondary-foreground: #e5e5e5;
+      --accent: #2a3656;
+      --accent-foreground: #bfdbfe;
+
+      /* UI Component Colors */
+      --card: #2a3040;
+      --card-foreground: #e5e5e5;
+      --popover: #262b38;
+      --popover-foreground: #e5e5e5;
+      --muted: #2a303e;
+      --muted-foreground: #a3a3a3;
+
+      /* Utility & Form Colors */
+      --border: #3d4354;
+      --input: #3d4354;
+      --ring: #e05d38;
+
+      /* Status & Feedback Colors */
+      --destructive: #ef4444;
+      --destructive-foreground: #ffffff;
+
+      /* Chart & Visualization Colors */
+      --chart-1: #86a7c8;
+      --chart-2: #e6a08f;
+      --chart-3: #5a7ca6;
+      --chart-4: #466494;
+      --chart-5: #334c82;
+
+      /* Sidebar & Navigation Colors */
+      --sidebar: #2a303f;
+      --sidebar-foreground: #e5e5e5;
+      --sidebar-primary: #e05d38;
+      --sidebar-primary-foreground: #ffffff;
+      --sidebar-accent: #2a3656;
+      --sidebar-accent-foreground: #bfdbfe;
+      --sidebar-border: #3d4354;
+      --sidebar-ring: #e05d38;
+
+      --radius: 0.5rem;
+    }
+
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background-color: var(--background);
+      color: var(--foreground);
+      letter-spacing: 0px;
+      zoom: 0.67;
+      min-height: 100vh;
+    }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--muted-foreground);
+      border-radius: 4px;
+      opacity: 0.2;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      opacity: 0.4;
+    }
+  </style>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            background: 'var(--background)',
+            foreground: 'var(--foreground)',
+            card: 'var(--card)',
+            'card-foreground': 'var(--card-foreground)',
+            popover: 'var(--popover)',
+            'popover-foreground': 'var(--popover-foreground)',
+            primary: 'var(--primary)',
+            'primary-foreground': 'var(--primary-foreground)',
+            secondary: 'var(--secondary)',
+            'secondary-foreground': 'var(--secondary-foreground)',
+            muted: 'var(--muted)',
+            'muted-foreground': 'var(--muted-foreground)',
+            accent: 'var(--accent)',
+            'accent-foreground': 'var(--accent-foreground)',
+            destructive: 'var(--destructive)',
+            'destructive-foreground': 'var(--destructive-foreground)',
+            border: 'var(--border)',
+            input: 'var(--input)',
+            ring: 'var(--ring)',
+            chart: {
+              1: 'var(--chart-1)',
+              2: 'var(--chart-2)',
+              3: 'var(--chart-3)',
+              4: 'var(--chart-4)',
+              5: 'var(--chart-5)'
             },
-            fontFamily: {
-              sans: ['JetBrains Mono', 'monospace'],
-              serif: ['JetBrains Mono', 'monospace'],
-              mono: ['JetBrains Mono', 'monospace']
-            },
-            borderRadius: {
-              lg: 'var(--radius)',
-              md: 'calc(var(--radius) - 2px)',
-              sm: 'calc(var(--radius) - 4px)'
-            },
-            boxShadow: {
-               // Strong, solid shadow for the pop-up effect
-               '3d': '6px 6px 0px 0px rgba(0, 0, 0, 0.4)',
-               '3d-sm': '3px 3px 0px 0px rgba(0, 0, 0, 0.4)',
-               '3d-hover': '8px 8px 0px 0px rgba(0, 0, 0, 0.4)',
-               DEFAULT: '0 4px 6px -1px rgb(0 0 0 / 0.3)'
+            sidebar: {
+              DEFAULT: 'var(--sidebar)',
+              foreground: 'var(--sidebar-foreground)',
+              primary: 'var(--sidebar-primary)',
+              'primary-foreground': 'var(--sidebar-primary-foreground)',
+              accent: 'var(--sidebar-accent)',
+              'accent-foreground': 'var(--sidebar-accent-foreground)',
+              border: 'var(--sidebar-border)',
+              ring: 'var(--sidebar-ring)'
             }
+          },
+          fontFamily: {
+            sans: ['JetBrains Mono', 'monospace'],
+            serif: ['JetBrains Mono', 'monospace'],
+            mono: ['JetBrains Mono', 'monospace']
+          },
+          borderRadius: {
+            lg: 'var(--radius)',
+            md: 'calc(var(--radius) - 2px)',
+            sm: 'calc(var(--radius) - 4px)'
+          },
+          boxShadow: {
+            // Strong, solid shadow for the pop-up effect
+            '3d': '6px 6px 0px 0px rgba(0, 0, 0, 0.4)',
+            '3d-sm': '3px 3px 0px 0px rgba(0, 0, 0, 0.4)',
+            '3d-hover': '8px 8px 0px 0px rgba(0, 0, 0, 0.4)',
+            DEFAULT: '0 4px 6px -1px rgb(0 0 0 / 0.3)'
           }
         }
       }
-    </script>
-  <script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "recharts": "https://esm.sh/recharts@^3.7.0",
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "react": "https://esm.sh/react@^19.2.4",
-    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
-    "d3": "https://esm.sh/d3@7"
-  }
-}
-</script>
+    }
+  </script>
+
 </head>
-  <body>
-    <div id="root"></div>
-  </body>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+
 </html>
