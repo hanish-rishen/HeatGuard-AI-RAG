@@ -80,7 +80,12 @@ class PredictiveEngine:
             print(f"[PredictiveEngine] Loaded model from {model_path}")
         except Exception as e:
             print(f"[PredictiveEngine] ERROR loading model: {e}")
-            raise RuntimeError(f"Failed to load XGBoost model: {e}")
+            # Don't hard-crash the API on startup if artifacts aren't present.
+            # The /health endpoint will report model_loaded=false and /analyze
+            # can return a clear error.
+            self.model = None
+            self.encoder = None
+            return
         
         # Step 3: Load district encoder
         try:
@@ -89,7 +94,9 @@ class PredictiveEngine:
             print(f"[PredictiveEngine] Encoder supports {len(self.encoder.classes_)} districts")
         except Exception as e:
             print(f"[PredictiveEngine] ERROR loading encoder: {e}")
-            raise RuntimeError(f"Failed to load district encoder: {e}")
+            self.model = None
+            self.encoder = None
+            return
     
     def calculate_heat_index(self, temperature_c: float, humidity: float) -> float:
         """
@@ -196,6 +203,11 @@ class PredictiveEngine:
         Returns:
             Tuple of (predicted_hospitalization_load, heat_index)
         """
+        if not self.is_loaded():
+            raise RuntimeError(
+                "Predictive model artifacts are not loaded. "
+                "Ensure Models/heat_health_model_v1.pkl and Models/district_encoder.pkl exist."
+            )
         # Step 1: Parse date for temporal features
         date_dt = datetime.strptime(date_str, "%Y-%m-%d")
         month = date_dt.month
