@@ -12,6 +12,19 @@ dist
 dist-ssr
 *.local
 
+backend/chroma_db/
+
+# Backend runtime cache
+backend/app/__pycache__/
+backend/**/__pycache__/
+backend/*.db
+backend/district_analytics.db
+
+# Backend env files
+backend/.env
+
+# Nested repos (safety)
+frontend/.git/
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
