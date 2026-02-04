@@ -371,6 +371,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
   const [aiAdvice, setAiAdvice] = useState<string>('');
   const [aiAdviceLoading, setAiAdviceLoading] = useState<boolean>(false);
   const [aiAdviceError, setAiAdviceError] = useState<string | null>(null);
+  const [aiAdviceModalOpen, setAiAdviceModalOpen] = useState<boolean>(false);
 
   // Search State
   const [searchTerm, setSearchTerm] = useState('');
@@ -436,6 +437,12 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
 
     run();
   }, [selectedDistrict, simplified]);
+
+  // Close modal when switching districts.
+  useEffect(() => {
+    if (!selectedDistrict) return;
+    setAiAdviceModalOpen(false);
+  }, [selectedDistrict?.district_name]);
 
   // Some environments (esp. when switching views) mount the SVG before it has a measurable size.
   // Ensure the element can always stretch to its container.
@@ -978,11 +985,22 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                    <div className="pt-2 border-t border-slate-600">
                        <div className="text-[10px] font-bold text-slate-400 uppercase mb-2 flex items-center justify-between">
                          <span>AI Recommendation</span>
-                         {aiAdviceLoading && (
-                           <span className="inline-flex items-center" aria-label="Generating recommendation">
-                             <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                           </span>
-                         )}
+                         <div className="flex items-center gap-2">
+                           {aiAdviceLoading && (
+                             <span className="inline-flex items-center" aria-label="Generating recommendation">
+                               <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                             </span>
+                           )}
+                           <button
+                             type="button"
+                             className="pointer-events-auto text-slate-300 hover:text-white transition-colors"
+                             onClick={() => setAiAdviceModalOpen(true)}
+                             title="Expand"
+                             aria-label="Open AI recommendation in large view"
+                           >
+                             <ArrowUpRight size={14} />
+                           </button>
+                         </div>
                        </div>
 
                        {aiAdviceError ? (
@@ -1003,6 +1021,53 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                         </div>
                       )}
                    </div>
+
+                    {/* AI recommendation modal */}
+                    {aiAdviceModalOpen && (
+                      <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4">
+                        <button
+                          type="button"
+                          className="absolute inset-0 bg-black/70"
+                          aria-label="Close"
+                          onClick={() => setAiAdviceModalOpen(false)}
+                        />
+                        <div className="relative w-[min(1800px,calc(100vw-1rem))] h-[92vh] sm:h-[94vh] overflow-hidden rounded-2xl border border-slate-600 bg-[#0f1f29] shadow-2xl">
+                          <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-slate-700">
+                            <div>
+                              <div className="text-base sm:text-lg font-bold text-white">AI Recommendation</div>
+                              <div className="text-sm text-slate-400">{selectedDistrict.district_name}</div>
+                            </div>
+                            <button
+                              type="button"
+                              className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-700/40 transition-colors"
+                              onClick={() => setAiAdviceModalOpen(false)}
+                              aria-label="Close modal"
+                            >
+                              <X size={18} />
+                            </button>
+                          </div>
+
+                          <div className="p-5 sm:p-6 overflow-y-auto h-[calc(92vh-64px)] sm:h-[calc(94vh-64px)]">
+                            {aiAdviceError ? (
+                              <div className="text-base text-red-300 leading-relaxed">
+                                Unable to generate recommendation ({aiAdviceError}).
+                              </div>
+                            ) : aiAdviceLoading ? (
+                              <div className="flex items-center gap-3 text-base text-slate-200">
+                                <span className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                                Generating recommendation…
+                              </div>
+                            ) : (
+                              <div className="prose prose-invert prose-lg max-w-none text-slate-100 leading-relaxed prose-headings:text-white prose-ul:my-4 prose-ol:my-4 prose-li:my-2">
+                                <ReactMarkdown>
+                                  {aiAdvice || '—'}
+                                </ReactMarkdown>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                </div>
           </div>
       )}
@@ -2362,7 +2427,9 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                // Carry-forward last known value so all 7 days plot.
                const prev = days.length > 0 ? days[days.length - 1] : null;
                const carried = typeof prev?.max_temp === 'number' && Number.isFinite(prev.max_temp) ? prev.max_temp : null;
-               const value = typeof row?.max_temp === 'number' && Number.isFinite(row.max_temp) ? row.max_temp : carried;
+               const firstKnown = chartDataRaw.find((x: any) => typeof x?.max_temp === 'number' && Number.isFinite(x.max_temp))?.max_temp ?? null;
+               const fallback = carried ?? firstKnown;
+               const value = typeof row?.max_temp === 'number' && Number.isFinite(row.max_temp) ? row.max_temp : fallback;
 
                days.push({
                  date: key,
