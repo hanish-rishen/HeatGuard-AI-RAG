@@ -355,9 +355,17 @@ interface IndiaMapUIProps {
 const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }> = ({ rankings, simplified = false }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const transformRef = useRef<any>(d3.zoomIdentity);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [geoData, setGeoData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Selected pin anchor (screen-space) so we can initially place the floating card near the dot.
+  const [pinAnchor, setPinAnchor] = useState<{ left: number; top: number } | null>(null);
+
+  // Floating (draggable) card position within the map container.
+  const [cardPos, setCardPos] = useState<{ left: number; top: number } | null>(null);
+  const draggingRef = useRef<{ startX: number; startY: number; startLeft: number; startTop: number } | null>(null);
 
   // Real AI recommendation for the currently selected district
   const [aiAdvice, setAiAdvice] = useState<string>('');
@@ -388,7 +396,36 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
           pct_vulnerable_social: selectedDistrict.pct_vulnerable_social,
           date: new Date().toISOString().slice(0, 10)
         });
-        setAiAdvice(String(res?.prescriptive_advice || '').trim());
+        const raw = String(res?.prescriptive_advice || '').trim();
+
+        // If the backend returned plain paragraphs (not markdown), convert into bullet points
+        // for easier scanning.
+        const looksLikeMarkdownList = /^\s*([-*]|\d+\.)\s+/m.test(raw);
+        const formatted = (() => {
+          if (!raw) return '';
+          if (looksLikeMarkdownList) return raw;
+
+          // Split into logical lines / sentences and bullet them.
+          const lines = raw
+            .split(/\r?\n+/)
+            .map(l => l.trim())
+            .filter(Boolean);
+
+          if (lines.length > 1) {
+            return lines.map(l => `- ${l}`).join('\n');
+          }
+
+          // Single paragraph: split by sentence-ish boundaries.
+          const parts = raw
+            .split(/(?<=[.!?])\s+(?=[A-Z(])/)
+            .map(p => p.trim())
+            .filter(Boolean);
+
+          if (parts.length <= 1) return `- ${raw}`;
+          return parts.map(p => `- ${p}`).join('\n');
+        })();
+
+        setAiAdvice(formatted);
       } catch (e: any) {
         setAiAdvice('');
         setAiAdviceError(e?.message || 'Failed to generate AI recommendation');
@@ -407,6 +444,117 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
     height: '100%',
     display: 'block'
   };
+
+  const updatePinAnchor = (district: DistrictRanking | null) => {
+    if (!district || simplified) {
+      setPinAnchor(null);
+      return;
+    }
+
+    if (!svgRef.current || !containerRef.current) {
+      setPinAnchor(null);
+      return;
+    }
+
+    const svg = d3.select(svgRef.current);
+    const projection = (svg.node() as any)?.__projection;
+    if (!projection || !Number.isFinite(district.lat) || !Number.isFinite(district.lon)) {
+      setPinAnchor(null);
+      return;
+    }
+
+    const [x, y] = projection([district.lon, district.lat]);
+    const t = transformRef.current || d3.zoomIdentity;
+    const sx = x * t.k + t.x;
+    const sy = y * t.k + t.y;
+
+    // Convert SVG-local to container-local.
+    // svgRef is inside the container, so align to the container's top-left.
+    const svgRect = svgRef.current.getBoundingClientRect();
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const left = (svgRect.left - containerRect.left) + sx;
+    const top = (svgRect.top - containerRect.top) + sy;
+
+    setPinAnchor({ left, top });
+  };
+
+  const clampCardPos = (pos: { left: number; top: number }) => {
+    const el = containerRef.current;
+    if (!el) return pos;
+    const rect = el.getBoundingClientRect();
+    // Keep inside container with a small margin.
+    const margin = rect.width < 420 ? 8 : 12;
+    const cardW = 288; // w-72
+    const cardH = 320; // approximate (varies with content)
+    const minLeft = margin;
+    const minTop = margin;
+    const maxLeft = Math.max(minLeft, rect.width - cardW - margin);
+    const maxTop = Math.max(minTop, rect.height - cardH - margin);
+    return {
+      left: Math.min(maxLeft, Math.max(minLeft, pos.left)),
+      top: Math.min(maxTop, Math.max(minTop, pos.top))
+    };
+  };
+
+  const beginDragCard = (e: React.PointerEvent) => {
+    if (!cardPos) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    draggingRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startLeft: cardPos.left,
+      startTop: cardPos.top
+    };
+  };
+
+  const onDragCard = (e: React.PointerEvent) => {
+    if (!draggingRef.current) return;
+    const dx = e.clientX - draggingRef.current.startX;
+    const dy = e.clientY - draggingRef.current.startY;
+    const next = clampCardPos({
+      left: draggingRef.current.startLeft + dx,
+      top: draggingRef.current.startTop + dy
+    });
+    setCardPos(next);
+  };
+
+  const endDragCard = () => {
+    draggingRef.current = null;
+  };
+
+  useEffect(() => {
+    if (simplified) return;
+
+    const onResize = () => updatePinAnchor(selectedDistrict);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [selectedDistrict, simplified]);
+
+  // When selecting a new district, place the floating card near the pin (once)
+  // but keep it where the user dragged it afterwards.
+  useEffect(() => {
+    if (simplified) return;
+    if (!selectedDistrict) {
+      setCardPos(null);
+      return;
+    }
+
+    // If card already placed (user dragged), don't snap it.
+    if (cardPos) return;
+
+    // Initial placement: under the search field (top-right), then user can drag within the map.
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const margin = rect.width < 420 ? 8 : 12;
+    const searchW = 320; // search overlay width (w-80)
+
+    const initial = clampCardPos({
+      left: rect.width - searchW - margin, // align with search's left edge
+      top: margin + 64 // under search field
+    });
+    setCardPos(initial);
+  }, [selectedDistrict, pinAnchor, simplified]);
 
   // 1. Load Base Map (India States)
   // Prefer a real remote GeoJSON (since the local placeholder may be empty),
@@ -572,54 +720,23 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
   // (When attached to the SVG, D3 can miss pointer events due to layered <g> content.)
   let captureRect: d3.Selection<SVGRectElement, unknown, null, undefined> | null = null;
   if (!simplified) {
+    // Keep the capture rect aligned to the visible viewport.
+    // Oversized rects can interact oddly with pointer events and may contribute to jitter.
     captureRect = g.insert("rect", ":first-child")
-      .attr("width", width * 10)
-      .attr("height", height * 10)
-      .attr("x", -width * 5)
-      .attr("y", -height * 5)
+      .attr("width", width)
+      .attr("height", height)
+      .attr("x", 0)
+      .attr("y", 0)
       .attr("fill", "transparent")
       .style("pointer-events", "all")
       // Ensure the cursor feedback matches the actual behavior.
       .style("cursor", "grab");
   }
 
-    // Add Wave/Pulse effect for high risk districts
-  if (!simplified) {
-    const pulseSelection = g.selectAll(".pulse")
-      .data(validPoints.filter(d => d.risk_score > 0.75))
-      .enter()
-      .append("circle")
-      .attr("class", "pulse")
-      .attr("cx", d => projection([d.lon, d.lat])?.[0] || 0)
-      .attr("cy", d => projection([d.lon, d.lat])?.[1] || 0)
-      .attr("r", 5)
-      .attr("fill", "none")
-      .attr("stroke", "#ef4444")
-      .attr("stroke-width", 2)
-      .attr("opacity", 0.6)
-      .style("pointer-events", "none");
+  // Pulse animation removed per UX request (keep map calm and avoid visual noise).
 
-    // D3 doesn't have a `.repeat()` method on transitions.
-    // Loop by re-triggering the transition on end.
-    const animatePulse = () => {
-      pulseSelection
-        .attr("r", 5)
-        .attr("opacity", 0.6)
-        .transition()
-        .duration(2000)
-        .ease(d3.easeCubicOut)
-        .attr("r", 30)
-        .attr("opacity", 0)
-        .on("end", animatePulse);
-    };
-
-    if (!pulseSelection.empty()) {
-      animatePulse();
-    }
-    }
-
-    g.selectAll("circle.point")
-      .data(validPoints)
+    const pointsSelection = g.selectAll("circle.point")
+      .data(validPoints, (d: any) => d?.district_name)
       .enter()
       .append("circle")
       .attr("class", "point")
@@ -632,6 +749,8 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
       .attr("opacity", 0.8)
       .attr("cursor", "pointer")
       .on("mouseover", function(event, d) {
+          // Avoid stacking transitions (can feel glitchy during/after panning).
+          d3.select(this).interrupt();
           d3.select(this)
             .transition().duration(200)
             .attr("r", 15)
@@ -643,6 +762,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
           }
       })
       .on("mouseout", function() {
+          d3.select(this).interrupt();
           d3.select(this)
             .transition().duration(200)
             .attr("r", simplified ? 3 : 5)
@@ -651,6 +771,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
       .on("click", (event, d) => {
           event.stopPropagation();
           setSelectedDistrict(d);
+          updatePinAnchor(d);
           // Optional: Zoom to clicked
       });
 
@@ -667,9 +788,28 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
               if (event?.type === 'mousedown' && event?.button !== 0) return false;
               return true;
             })
+            .on("start", () => {
+              // Stop any ongoing point hover transitions during pan/zoom.
+              try {
+                pointsSelection.interrupt();
+              } catch {}
+            })
             .on("zoom", (event) => {
-                g.attr("transform", event.transform);
-                transformRef.current = event.transform;
+              // Keep zoom handler lightweight: only update the group transform.
+              // Round translate slightly to reduce sub-pixel flicker ("vibrating" feel)
+              // on some GPUs/browsers while dragging.
+              const t = event.transform;
+              const tx = Math.round(t.x * 10) / 10;
+              const ty = Math.round(t.y * 10) / 10;
+              const k = Math.round(t.k * 1000) / 1000;
+              const rounded = d3.zoomIdentity.translate(tx, ty).scale(k);
+              g.attr("transform", rounded.toString());
+              transformRef.current = rounded;
+
+              // Keep the anchored card on top of the pin while panning/zooming.
+              if (selectedDistrict) {
+                updatePinAnchor(selectedDistrict);
+              }
             });
 
         // Attach zoom to the capture rect so drag-to-pan works reliably.
@@ -724,10 +864,14 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
              .call(zoom.transform, transform);
       }
 
+  // Update anchor immediately (and again after the zoom settles).
+  updatePinAnchor(district);
+  window.setTimeout(() => updatePinAnchor(district), 800);
+
   };
 
   return (
-    <div className={`relative flex flex-col bg-[#1a2c38] overflow-hidden ${simplified ? 'w-full h-full' : 'w-full h-full border-2 border-border rounded-xl shadow-3d'}`}>
+    <div ref={containerRef} className={`relative flex flex-col bg-[#1a2c38] overflow-hidden ${simplified ? 'w-full h-full' : 'w-full h-full border-2 border-border rounded-xl shadow-3d'}`}>
 
       {/* --- Search Bar Overlay --- */}
       {!simplified && (
@@ -769,29 +913,44 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                 )}
             </div>
 
-            {/* Quick Legend (inside map container) */}
-            <div className="absolute bottom-4 left-4 z-20 bg-[#2a3b47]/80 backdrop-blur p-3 rounded-xl border border-slate-600 shadow-xl w-64">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Heat Risk Index</div>
-              <div className="h-2 w-full rounded-full bg-gradient-to-r from-emerald-500 via-orange-500 to-red-500 mb-1"></div>
-              <div className="flex justify-between text-[10px] text-slate-400 font-medium">
-                <span>Safe</span>
-                <span>Caution</span>
-                <span>Danger</span>
-              </div>
-            </div>
         </div>
       )}
 
-      {/* --- Selected District Details Card --- */}
-      {selectedDistrict && !simplified && (
-          <div className="absolute top-4 right-4 z-20 w-72 bg-[#2a3b47]/95 backdrop-blur border border-slate-600 rounded-xl shadow-2xl p-4 animate-in slide-in-from-right-10 duration-300">
+  {/* Legend removed per request */}
+
+      {/* --- Selected District Details Card (anchored above the selected pin) --- */}
+  {selectedDistrict && !simplified && (
+          <div
+            className="absolute z-20 w-72 bg-[#2a3b47]/95 backdrop-blur border border-slate-600 rounded-xl shadow-2xl p-4 animate-in fade-in-0 duration-200"
+            style={{
+      left: cardPos?.left ?? (pinAnchor?.left ?? 16),
+      top: cardPos?.top ?? (pinAnchor?.top ?? 16),
+      transform: cardPos ? 'none' : (pinAnchor ? 'translate(-50%, calc(-100% - 12px))' : 'none')
+            }}
+          >
+               {/* Drag handle */}
+               <div
+                 className="-mx-4 -mt-4 mb-3 px-4 py-2 border-b border-slate-600/70 flex items-center justify-between cursor-grab active:cursor-grabbing select-none"
+                 onPointerDown={beginDragCard}
+                 onPointerMove={onDragCard}
+                 onPointerUp={endDragCard}
+                 onPointerCancel={endDragCard}
+               >
+                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">District Summary</div>
+                 <div className="flex items-center gap-2 text-slate-400">
+                   <div className="h-1 w-1 rounded-full bg-slate-500" />
+                   <div className="h-1 w-1 rounded-full bg-slate-500" />
+                   <div className="h-1 w-1 rounded-full bg-slate-500" />
+                 </div>
+               </div>
+
                <div className="flex justify-between items-start mb-4">
                    <div>
                        <h3 className="font-bold text-lg text-white">{selectedDistrict.district_name}</h3>
                        <div className="text-xs text-slate-400">Lat: {selectedDistrict.lat.toFixed(2)}, Lon: {selectedDistrict.lon.toFixed(2)}</div>
                    </div>
                    <button
-                       onClick={() => setSelectedDistrict(null)}
+                       onClick={() => { setSelectedDistrict(null); setPinAnchor(null); setCardPos(null); }}
                        className="p-1 hover:bg-slate-600 rounded-full text-slate-400 hover:text-white transition-colors">
                        <X size={16}/>
                    </button>
@@ -817,14 +976,32 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                    </div>
 
                    <div className="pt-2 border-t border-slate-600">
-                       <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">AI Recommendation</div>
-                       <p className="text-xs text-slate-300 leading-relaxed">
-                           {aiAdviceLoading
-                             ? 'Generating recommendation…'
-                             : (aiAdviceError
-                                 ? `Unable to generate recommendation (${aiAdviceError}).`
-                                 : (aiAdvice || '—'))}
-                       </p>
+                       <div className="text-[10px] font-bold text-slate-400 uppercase mb-2 flex items-center justify-between">
+                         <span>AI Recommendation</span>
+                         {aiAdviceLoading && (
+                           <span className="inline-flex items-center" aria-label="Generating recommendation">
+                             <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                           </span>
+                         )}
+                       </div>
+
+                       {aiAdviceError ? (
+                         <div className="text-xs text-red-300 leading-relaxed">
+                           Unable to generate recommendation ({aiAdviceError}).
+                         </div>
+                       ) : aiAdviceLoading ? (
+                         <div className="text-xs text-slate-300 leading-relaxed">
+                           Generating recommendation…
+                         </div>
+                      ) : (
+                        <div className="max-h-40 overflow-y-auto pr-1">
+                          <div className="prose prose-invert prose-xs max-w-none text-slate-200 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5">
+                            <ReactMarkdown>
+                              {aiAdvice || '—'}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
                    </div>
                </div>
           </div>
