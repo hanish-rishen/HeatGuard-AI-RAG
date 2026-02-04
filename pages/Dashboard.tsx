@@ -188,6 +188,47 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, change, trend, isIncr
   );
 };
 
+const RiskPieBadge: React.FC<{ percent: number; size?: number; color?: string }> = ({
+  percent,
+  size = 44,
+  color = '#ef4444'
+}) => {
+  const p = Math.max(0, Math.min(100, percent));
+  const stroke = 5;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const dash = (p / 100) * c;
+
+  return (
+    <div style={{ width: size, height: size }} className="relative">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="block">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="rgba(239, 68, 68, 0.25)"
+          strokeWidth={stroke}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={`${dash} ${c - dash}`}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-[11px] font-bold tabular-nums text-destructive drop-shadow-sm">{Math.round(p)}%</span>
+      </div>
+    </div>
+  );
+};
+
 const UploadArea = () => (
   <div className="bg-card/50 border-2 border-dashed border-border rounded-xl p-8 text-center hover:bg-card/80 transition-colors cursor-pointer group flex flex-col items-center justify-center min-h-[200px]">
     <div className="w-16 h-16 bg-primary/20 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
@@ -2569,15 +2610,28 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                 .slice(0, 2)
                 .map((district) => (
                     <div key={district.district_name} className="bg-destructive/10 border border-destructive/20 p-4 rounded-xl flex items-start gap-4">
-                        <div className="p-3 bg-background rounded-full border border-destructive/30 text-destructive mt-1">
-                            <Thermometer size={24} />
+                        {/* Remove the extra circular container so the pie reads cleanly */}
+                        <div className="mt-1 text-destructive">
+                            <RiskPieBadge percent={(district.risk_score ?? 0) * 100} />
                         </div>
-                        <div>
-                             <h4 className="font-bold text-lg text-foreground">{district.district_name} District</h4>
-                             <div className="flex items-center gap-2 mt-1 mb-2">
-                                <span className="bg-destructive text-destructive-foreground text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Critical</span>
-                                <span className="text-sm text-foreground font-medium">Heat hospitalization risk: {(district.risk_score * 100).toFixed(0)}%</span>
+
+                        <div className="min-w-0">
+                             <h4 className="font-bold text-lg text-foreground truncate">{district.district_name} District</h4>
+
+                             {/* Use compact tags instead of verbose text */}
+                             <div className="flex flex-wrap items-center gap-2 mt-1 mb-2">
+                                <span
+                                  className="inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[11px] font-black leading-none"
+                                  title="Critical"
+                                  aria-label="Critical"
+                                >
+                                  !
+                                </span>
+                                <span className="bg-destructive/20 border border-destructive/30 text-destructive text-[10px] font-bold px-2 py-0.5 rounded-full tabular-nums">
+                                  {(district.risk_score * 100).toFixed(0)}% risk
+                                </span>
                              </div>
+
                              <p className="text-sm text-muted-foreground/90">
                                 High probability of heatwave impact. {district.max_temp.toFixed(1)}°C detected.
                                 {district.pct_outdoor_workers > 30 ? " Large outdoor workforce at risk." : ""}
