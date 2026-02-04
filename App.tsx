@@ -45,6 +45,13 @@ const MainApp: React.FC = () => {
                              eventSource.close();
                          }, 1500);
 
+                     } else if (data.type === 'complete') {
+                         // Some streams may emit a completion event even if result was already sent.
+                         // Ensure we stop any processing animations regardless.
+                         setLogs(prev => [...prev, "> Data stream complete."]);
+                         setRankingsLoading(false);
+                         eventSource.close();
+
                      } else if (data.type === 'error') {
                          setLogs(prev => [...prev, `> ERROR: ${data.message}`]);
                          eventSource.close();

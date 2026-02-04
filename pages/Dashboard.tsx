@@ -433,8 +433,13 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
       return '#10b981'; // Low Risk
     };
 
-    // Plot valid points
-    const validPoints = rankings.filter(d => d.lat && d.lon);
+    // Plot valid points (0 is a valid coordinate; only filter null/undefined/non-finite)
+    const validPoints = rankings.filter(d => Number.isFinite(d.lat) && Number.isFinite(d.lon));
+
+    // If geojson is empty, show a non-fatal warning rather than a blank map.
+    if (!loading && geoData && Array.isArray(geoData.features) && geoData.features.length === 0 && !error) {
+      setError('Base map polygons are unavailable (empty GeoJSON). Showing district pins only.');
+    }
 
     // Fix: Add transparent background for zoom capturing
     if (!simplified) {
@@ -535,7 +540,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
       const zoom = (svg.node() as any).__zoom;
       const projection = (svg.node() as any).__projection;
 
-      if (projection && zoom && district.lat && district.lon) {
+  if (projection && zoom && Number.isFinite(district.lat) && Number.isFinite(district.lon)) {
           const [x, y] = projection([district.lon, district.lat]);
           const scale = 4; // Zoom level
           const width = svgRef.current.clientWidth;
@@ -632,7 +637,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                <div className="space-y-3">
                    <div className="bg-slate-800/50 p-3 rounded-lg flex justify-between items-center">
                        <span className="text-sm text-slate-300">Risk Score</span>
-                       <span className={`text-xl font-bold ${selectedDistrict.risk_score > 75 ? 'text-red-400' : 'text-emerald-400'}`}>
+                       <span className={`text-xl font-bold ${selectedDistrict.risk_score > 0.75 ? 'text-red-400' : 'text-emerald-400'}`}>
                            {selectedDistrict.risk_score.toFixed(1)}
                        </span>
                    </div>
@@ -651,7 +656,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                    <div className="pt-2 border-t border-slate-600">
                        <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">AI Recommendation</div>
                        <p className="text-xs text-slate-300 leading-relaxed">
-                           {selectedDistrict.risk_score > 75
+                           {selectedDistrict.risk_score > 0.75
                             ? "Urgent: Activate district cooling centers. High probability of heat-stroke events."
                             : "Monitor local weather stations. standard advisory applies."}
                        </p>
@@ -1867,6 +1872,10 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   const [showLogs, setShowLogs] = useState(false); // State for Logs Modal
   const [trendData, setTrendData] = useState<any[]>([]); // New State for Chart Data
 
+  const [refetchModalOpen, setRefetchModalOpen] = useState(false);
+  const [refetchModalMessage, setRefetchModalMessage] = useState<string>('');
+  const [refetchInProgress, setRefetchInProgress] = useState(false);
+
   const [rankingsFetchedOnce, setRankingsFetchedOnce] = useState<boolean>(() => {
     try {
       return localStorage.getItem('heatguard_rankings_fetched_once_v1') === '1';
@@ -1886,8 +1895,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     const msg = already
       ? 'This will refetch district rankings again. It may take some time because there are many districts. You already fetched this data once in this browser. Continue?'
       : 'This will fetch district rankings. It may take some time because there are many districts. Continue?';
-    if (!window.confirm(msg)) return;
+    setRefetchModalMessage(msg);
+    setRefetchModalOpen(true);
+  };
 
+  const confirmRefetch = async () => {
+    setRefetchInProgress(true);
     try {
       console.log('[Dashboard] Refetch requested.');
       await new Promise<void>((resolve, reject) => {
@@ -1936,9 +1949,13 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       } catch {
         // ignore
       }
+
+      setRefetchModalOpen(false);
     } catch (e) {
       console.error(e);
-      alert('Failed to refetch rankings. Please ensure the backend is running.');
+      setRefetchModalMessage('Failed to refetch rankings. Please ensure the backend is running and try again.');
+    } finally {
+      setRefetchInProgress(false);
     }
   };
 
@@ -1974,6 +1991,20 @@ const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
   <>
+
+    <ConfirmModal
+      open={refetchModalOpen}
+      title="Refetch district rankings"
+      message={refetchModalMessage}
+      confirmText={refetchInProgress ? 'Refetching…' : 'Continue'}
+      cancelText="Cancel"
+      variant={rankingsFetchedOnce ? 'warning' : 'default'}
+      isLoading={refetchInProgress}
+      onCancel={() => {
+        if (!refetchInProgress) setRefetchModalOpen(false);
+      }}
+      onConfirm={confirmRefetch}
+    />
 
 
     {/* Log Console Modal */}
