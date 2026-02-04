@@ -4,9 +4,10 @@ import { Terminal, Loader2 } from 'lucide-react';
 interface LogConsoleProps {
   logs: string[];
   embedded?: boolean;
+  loading?: boolean;
 }
 
-export const LogConsole: React.FC<LogConsoleProps> = ({ logs, embedded = false }) => {
+export const LogConsole: React.FC<LogConsoleProps> = ({ logs, embedded = false, loading = false }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const containerClasses = embedded
@@ -45,10 +46,12 @@ export const LogConsole: React.FC<LogConsoleProps> = ({ logs, embedded = false }
             </div>
           ))}
 
-          <div className="flex items-center gap-2 text-green-500 mt-4 animate-pulse">
-            <Loader2 size={16} className="animate-spin" />
-            <span>Processing...</span>
-          </div>
+          {loading && (
+            <div className="flex items-center gap-2 text-green-500 mt-4 animate-pulse">
+              <Loader2 size={16} className="animate-spin" />
+              <span>Processing...</span>
+            </div>
+          )}
 
           <div ref={bottomRef} />
         </div>

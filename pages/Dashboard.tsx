@@ -359,11 +359,54 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Real AI recommendation for the currently selected district
+  const [aiAdvice, setAiAdvice] = useState<string>('');
+  const [aiAdviceLoading, setAiAdviceLoading] = useState<boolean>(false);
+  const [aiAdviceError, setAiAdviceError] = useState<string | null>(null);
+
   // Search State
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredDistricts, setFilteredDistricts] = useState<DistrictRanking[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedDistrict, setSelectedDistrict] = useState<DistrictRanking | null>(null);
+
+  useEffect(() => {
+    const run = async () => {
+      if (!selectedDistrict || simplified) return;
+
+      setAiAdviceLoading(true);
+      setAiAdviceError(null);
+      try {
+        // Use the real backend RAG+LLM prescriptive engine via /analyze.
+        const res = await HeatGuardAPI.analyzeDistrict({
+          district_name: selectedDistrict.district_name,
+          max_temp: selectedDistrict.max_temp,
+          lst: selectedDistrict.lst,
+          humidity: selectedDistrict.humidity,
+          pct_children: selectedDistrict.pct_children,
+          pct_outdoor_workers: selectedDistrict.pct_outdoor_workers,
+          pct_vulnerable_social: selectedDistrict.pct_vulnerable_social,
+          date: new Date().toISOString().slice(0, 10)
+        });
+        setAiAdvice(String(res?.prescriptive_advice || '').trim());
+      } catch (e: any) {
+        setAiAdvice('');
+        setAiAdviceError(e?.message || 'Failed to generate AI recommendation');
+      } finally {
+        setAiAdviceLoading(false);
+      }
+    };
+
+    run();
+  }, [selectedDistrict, simplified]);
+
+  // Some environments (esp. when switching views) mount the SVG before it has a measurable size.
+  // Ensure the element can always stretch to its container.
+  const svgStyle: React.CSSProperties = {
+    width: '100%',
+    height: '100%',
+    display: 'block'
+  };
 
   // 1. Load Base Map (India States)
   // Prefer a real remote GeoJSON (since the local placeholder may be empty),
@@ -497,8 +540,26 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
       return '#10b981'; // Low Risk
     };
 
-    // Plot valid points (0 is a valid coordinate; only filter null/undefined/non-finite)
-    const validPoints = rankings.filter(d => Number.isFinite(d.lat) && Number.isFinite(d.lon));
+    // Plot valid points.
+    // Note: fallback coords can be 0/0 (invalid for India) which makes pins stack at one spot and look "missing".
+    // Also exclude out-of-range coordinates.
+    const validPoints = rankings.filter(d => {
+      if (!Number.isFinite(d.lat) || !Number.isFinite(d.lon)) return false;
+      if (d.lat === 0 && d.lon === 0) return false;
+      if (d.lat < -90 || d.lat > 90) return false;
+      if (d.lon < -180 || d.lon > 180) return false;
+      return true;
+    });
+
+    if (!simplified && !loading && validPoints.length === 0) {
+      g.append('text')
+        .attr('x', width / 2)
+        .attr('y', height / 2)
+        .attr('text-anchor', 'middle')
+        .attr('fill', '#94a3b8')
+        .style('font-size', '12px')
+        .text('No district coordinates available to plot yet.');
+    }
 
     // If geojson is empty, show a non-fatal warning rather than a blank map.
     // Hide this warning in simplified tiles so the Risk Overview card doesn't look "blank".
@@ -506,37 +567,55 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
       setError('Base map polygons are unavailable (empty GeoJSON). Showing district pins only.');
     }
 
-    // Fix: Add transparent background for zoom capturing
-    if (!simplified) {
-        g.append("rect")
-            .attr("width", width * 10)
-            .attr("height", height * 10)
-            .attr("x", -width * 5)
-            .attr("y", -height * 5)
-            .attr("fill", "transparent")
-            .style("pointer-events", "all");
-    }
+  // Fix: Add transparent background for zoom capturing.
+  // IMPORTANT: we attach the zoom handler to this rect so it consistently receives drag events.
+  // (When attached to the SVG, D3 can miss pointer events due to layered <g> content.)
+  let captureRect: d3.Selection<SVGRectElement, unknown, null, undefined> | null = null;
+  if (!simplified) {
+    captureRect = g.insert("rect", ":first-child")
+      .attr("width", width * 10)
+      .attr("height", height * 10)
+      .attr("x", -width * 5)
+      .attr("y", -height * 5)
+      .attr("fill", "transparent")
+      .style("pointer-events", "all")
+      // Ensure the cursor feedback matches the actual behavior.
+      .style("cursor", "grab");
+  }
 
     // Add Wave/Pulse effect for high risk districts
   if (!simplified) {
-    g.selectAll(".pulse")
+    const pulseSelection = g.selectAll(".pulse")
       .data(validPoints.filter(d => d.risk_score > 0.75))
-            .enter()
-            .append("circle")
-            .attr("cx", d => projection([d.lon, d.lat])?.[0] || 0)
-            .attr("cy", d => projection([d.lon, d.lat])?.[1] || 0)
-            .attr("r", 5)
-            .attr("fill", "none")
-            .attr("stroke", "#ef4444")
-            .attr("stroke-width", 2)
-            .attr("opacity", 0.6)
-            .style("pointer-events", "none")
-            .transition()
-            .duration(2000)
-            .ease(d3.easeCubicOut)
-            .repeat(Infinity)
-            .attr("r", 30)
-            .attr("opacity", 0);
+      .enter()
+      .append("circle")
+      .attr("class", "pulse")
+      .attr("cx", d => projection([d.lon, d.lat])?.[0] || 0)
+      .attr("cy", d => projection([d.lon, d.lat])?.[1] || 0)
+      .attr("r", 5)
+      .attr("fill", "none")
+      .attr("stroke", "#ef4444")
+      .attr("stroke-width", 2)
+      .attr("opacity", 0.6)
+      .style("pointer-events", "none");
+
+    // D3 doesn't have a `.repeat()` method on transitions.
+    // Loop by re-triggering the transition on end.
+    const animatePulse = () => {
+      pulseSelection
+        .attr("r", 5)
+        .attr("opacity", 0.6)
+        .transition()
+        .duration(2000)
+        .ease(d3.easeCubicOut)
+        .attr("r", 30)
+        .attr("opacity", 0)
+        .on("end", animatePulse);
+    };
+
+    if (!pulseSelection.empty()) {
+      animatePulse();
+    }
     }
 
     g.selectAll("circle.point")
@@ -579,12 +658,30 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
     if (!simplified) {
         const zoom = d3.zoom<SVGSVGElement, unknown>()
             .scaleExtent([1, 8]) // Min/Max zoom
+            // Avoid glitchy interactions when users click pins/search overlay.
+            // Allow wheel-zoom and left mouse drag.
+            .filter((event: any) => {
+              // Block zoom when modifier keys are held (often means browser/trackpad gestures)
+              if (event?.ctrlKey || event?.metaKey) return false;
+              // Only left-button drag pans
+              if (event?.type === 'mousedown' && event?.button !== 0) return false;
+              return true;
+            })
             .on("zoom", (event) => {
                 g.attr("transform", event.transform);
                 transformRef.current = event.transform;
             });
 
-        svg.call(zoom);
+        // Attach zoom to the capture rect so drag-to-pan works reliably.
+        // Also prevent the browser from treating drag as text selection.
+        if (captureRect) {
+          (captureRect as any).call(zoom as any);
+        } else {
+          svg.call(zoom);
+        }
+
+  // Disable double-click zoom (feels glitchy when selecting districts)
+  svg.on('dblclick.zoom', null);
 
         // Store zoom instance on DOM node for external access
         (svg.node() as any).__zoom = zoom;
@@ -626,6 +723,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
              .duration(750)
              .call(zoom.transform, transform);
       }
+
   };
 
   return (
@@ -633,7 +731,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
 
       {/* --- Search Bar Overlay --- */}
       {!simplified && (
-        <div className="absolute top-4 left-4 z-20 w-80">
+        <div className="absolute top-4 right-4 z-20 w-80">
             <div className="relative group">
                 <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-muted-foreground">
                     <Search size={16} />
@@ -671,15 +769,15 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                 )}
             </div>
 
-            {/* Quick Legend */}
-             <div className="mt-4 bg-[#2a3b47]/80 backdrop-blur p-3 rounded-xl border border-slate-600 shadow-xl">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Heat Risk Index</div>
-                <div className="h-2 w-full rounded-full bg-gradient-to-r from-emerald-500 via-orange-500 to-red-500 mb-1"></div>
-                <div className="flex justify-between text-[10px] text-slate-400 font-medium">
-                    <span>Safe</span>
-                    <span>Caution</span>
-                    <span>Danger</span>
-                </div>
+            {/* Quick Legend (inside map container) */}
+            <div className="absolute bottom-4 left-4 z-20 bg-[#2a3b47]/80 backdrop-blur p-3 rounded-xl border border-slate-600 shadow-xl w-64">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Heat Risk Index</div>
+              <div className="h-2 w-full rounded-full bg-gradient-to-r from-emerald-500 via-orange-500 to-red-500 mb-1"></div>
+              <div className="flex justify-between text-[10px] text-slate-400 font-medium">
+                <span>Safe</span>
+                <span>Caution</span>
+                <span>Danger</span>
+              </div>
             </div>
         </div>
       )}
@@ -703,7 +801,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                    <div className="bg-slate-800/50 p-3 rounded-lg flex justify-between items-center">
                        <span className="text-sm text-slate-300">Heat hospitalization risk</span>
                        <span className={`text-xl font-bold ${selectedDistrict.risk_score > 0.75 ? 'text-red-400' : 'text-emerald-400'}`}>
-                           {selectedDistrict.risk_score.toFixed(1)}
+                           {(selectedDistrict.risk_score * 100).toFixed(0)}%
                        </span>
                    </div>
 
@@ -721,9 +819,11 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                    <div className="pt-2 border-t border-slate-600">
                        <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">AI Recommendation</div>
                        <p className="text-xs text-slate-300 leading-relaxed">
-                           {selectedDistrict.risk_score > 0.75
-                            ? "Urgent: Activate district cooling centers. High probability of heat-stroke events."
-                            : "Monitor local weather stations. standard advisory applies."}
+                           {aiAdviceLoading
+                             ? 'Generating recommendation…'
+                             : (aiAdviceError
+                                 ? `Unable to generate recommendation (${aiAdviceError}).`
+                                 : (aiAdvice || '—'))}
                        </p>
                    </div>
                </div>
@@ -2038,7 +2138,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
          const targetDistrict = rankings.length > 0 ? rankings[0].district_name : "Adilabad";
          try {
              // Retrieve real historical data from backend
-             const history = await HeatGuardAPI.getDistrictHistory(targetDistrict);
+             // Ask for enough history to reliably build the last-7-calendar-days window.
+             const history = await HeatGuardAPI.getDistrictHistory(targetDistrict, 60);
 
              // Format for chart
              const chartDataRaw = (Array.isArray(history) ? history : [])
@@ -2053,7 +2154,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
              // Sort by date ascending
              chartDataRaw.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-             // Ensure we always show the last 7 calendar days (missing days become nulls)
+             // Ensure we always show the last 7 calendar days.
+             // Avoid null gaps in the chart (Recharts will skip nulls and you can end up with < 7 points).
              const byDay = new Map<string, { date: string; max_temp: number; shortDate: string }>();
              chartDataRaw.forEach((row: any) => {
                const dayKey = new Date(row.date).toISOString().slice(0, 10);
@@ -2061,18 +2163,41 @@ const DashboardView: React.FC<DashboardViewProps> = ({
              });
 
              const days: any[] = [];
-             const today = new Date();
-             today.setHours(0, 0, 0, 0);
+
+             // Anchor the window to the latest date we actually have.
+             // This avoids the common case where the backend is "ahead" or "behind" local time,
+             // which can make the chart look like it has only 6 days.
+             const latestKeyFromHistory = chartDataRaw.length > 0
+               ? String(chartDataRaw[chartDataRaw.length - 1].date).slice(0, 10)
+               : null;
+
+             const anchor = latestKeyFromHistory ? new Date(latestKeyFromHistory) : new Date();
+             if (!Number.isNaN(anchor.getTime())) {
+               anchor.setHours(0, 0, 0, 0);
+             }
+
              for (let i = 6; i >= 0; i--) {
-               const d = new Date(today);
-               d.setDate(today.getDate() - i);
+               const d = new Date(anchor);
+               d.setDate(anchor.getDate() - i);
                const key = d.toISOString().slice(0, 10);
                const row = byDay.get(key);
+
+               // Carry-forward last known value so all 7 days plot.
+               const prev = days.length > 0 ? days[days.length - 1] : null;
+               const carried = typeof prev?.max_temp === 'number' && Number.isFinite(prev.max_temp) ? prev.max_temp : null;
+               const value = typeof row?.max_temp === 'number' && Number.isFinite(row.max_temp) ? row.max_temp : carried;
+
                days.push({
                  date: key,
                  shortDate: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                 max_temp: row?.max_temp ?? null
+                 max_temp: value
                });
+             }
+
+             // If we still don't have any numeric data, show empty rather than a flat zero/NaN line.
+             if (!days.some((x) => typeof x?.max_temp === 'number' && Number.isFinite(x.max_temp))) {
+               setTrendData([]);
+               return;
              }
 
              setTrendData(days);
@@ -2115,7 +2240,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                 >
                     <X size={20} />
                 </button>
-                <LogConsole logs={logs} />
+                <LogConsole logs={logs} loading={rankingsLoading} />
             </div>
         </div>
     )}
@@ -2589,7 +2714,11 @@ const Dashboard: React.FC<DashboardProps> = ({ rankings, rankingsLoading, logs }
             logs={logs}
           />
         )}
-  {currentView === 'map' && <div className="flex-1 w-full h-full min-h-[600px] relative"><IndiaMapUI rankings={rankings} /></div>}
+        {currentView === 'map' && (
+          <div className="flex-1 w-full min-h-[600px] relative">
+            <IndiaMapUI rankings={rankings} />
+          </div>
+        )}
         {currentView === 'rag' && <RagEngineView />}
   {currentView === 'datasources' && <DataSourcesView />}
   {currentView === 'reports' && <ReportsView analysisResult={analysisResult} />}

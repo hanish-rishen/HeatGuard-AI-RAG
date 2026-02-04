@@ -120,8 +120,8 @@ export const HeatGuardAPI = {
     },
 
     // Get trend history for a district
-    getDistrictHistory: async (districtName: string): Promise<DistrictRanking[]> => {
-    const response = await api.get<DistrictRanking[]>(`/districts/${districtName}/history?limit=60`);
+    getDistrictHistory: async (districtName: string, limit: number = 30): Promise<DistrictRanking[]> => {
+        const response = await api.get<DistrictRanking[]>(`/districts/${encodeURIComponent(districtName)}/history?limit=${encodeURIComponent(String(limit))}`);
         return response.data;
     },
 
