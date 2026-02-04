@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import * as Tesseract from 'tesseract.js';
+// import * as Tesseract from 'tesseract.js'; Removed Tesseract
 
 import * as d3 from 'd3';
 import {
@@ -49,7 +49,7 @@ import {
   Tooltip,
   ResponsiveContainer
 } from 'recharts';
-import { HeatGuardAPI, DistrictData, AnalysisResponse, DistrictRanking, RankingsResponse } from '../api';
+import { HeatGuardAPI, DistrictData, AnalysisResponse, DistrictRanking, RankingsResponse, UploadedFile } from '../api';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '../ui';
 import { useNavigate } from 'react-router-dom';
 import { LogConsole } from '../components/LogConsole';
@@ -682,20 +682,35 @@ const RagEngineView = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim()) return;
-    const newMsg = { id: Date.now(), role: 'user', content: input };
+    const userText = input;
+    const newMsg = { id: Date.now(), role: 'user', content: userText };
     setMessages(prev => [...prev, newMsg]);
     setInput('');
 
-    // Placeholder response - Real backend integration needed
-    setTimeout(() => {
-      setMessages(prev => [...prev, {
-        id: Date.now() + 1,
-        role: 'ai',
-        content: 'System: Real RAG backend connection required to process this query.'
-      }]);
-    }, 500);
+    try {
+        const response = await fetch('http://localhost:8000/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: userText })
+        });
+
+        if (!response.ok) throw new Error("Backend connection failed");
+
+        const data = await response.json();
+        setMessages(prev => [...prev, {
+            id: Date.now() + 1,
+            role: 'ai',
+            content: data.response
+        }]);
+    } catch (e) {
+         setMessages(prev => [...prev, {
+            id: Date.now() + 1,
+            role: 'ai',
+            content: 'System: Error connecting to RAG backend. Please ensure the server is running.'
+          }]);
+    }
   };
 
   return (
@@ -755,7 +770,7 @@ const RagEngineView = () => {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               placeholder="Ask a question..."
-              className="w-full bg-muted/30 border-2 border-border rounded-xl pl-4 pr-12 py-3 text-sm focus:outline-none focus:border-primary transition-colors text-foreground placeholder:text-muted-foreground/60"
+              className="w-full bg-[#1e293b] border-2 border-slate-600 rounded-xl pl-4 pr-12 py-3 text-sm focus:outline-none focus:border-primary transition-colors text-white placeholder:text-slate-400"
             />
             <button
               onClick={handleSend}
@@ -794,8 +809,25 @@ const RagEngineView = () => {
 // --- Data Sources View ---
 const DataSourcesView = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [files, setFiles] = useState<any[]>([]);
+  const [files, setFiles] = useState<UploadedFile[]>([]);
+  // Use a dictionary or array with IDs to track progress per file
+  const [processingFiles, setProcessingFiles] = useState<{ id: string, file: File, progress: number }[]>([]);
+
   const [isDragging, setIsDragging] = useState(false);
+
+  // Load files on mount
+  useEffect(() => {
+    fetchFiles();
+  }, []);
+
+  const fetchFiles = async () => {
+    try {
+        const fetched = await HeatGuardAPI.getFiles();
+        setFiles(fetched);
+    } catch (e) {
+        console.error("Failed to fetch files", e);
+    }
+  };
 
   const handleDragOver = (e: React.DragEvent) => {
       e.preventDefault();
@@ -815,55 +847,41 @@ const DataSourcesView = () => {
   };
 
   const processFiles = async (uploads: File[]) => {
-      // Add files to state with 'Processing' status
-      const newFiles = uploads.map(f => ({
-          name: f.name,
-          size: (f.size / 1024 / 1024).toFixed(2) + ' MB',
-          type: f.type,
-          status: 'Processing',
-          progress: 0,
-          date: new Date().toLocaleDateString()
+      // Create entries for new files
+      const newProcessing = uploads.map(f => ({
+          id: Math.random().toString(36).substr(2, 9),
+          file: f,
+          progress: 0
       }));
 
-      setFiles(prev => [...newFiles, ...prev]);
+      setProcessingFiles(prev => [...prev, ...newProcessing]);
 
-      // Process each file
-      for (let i = 0; i < uploads.length; i++) {
-          const file = uploads[i];
-          const isImage = file.type.startsWith('image/');
+      // Upload sequentially to avoid overwhelming server if many big files
+      for (const item of newProcessing) {
+          try {
+              await HeatGuardAPI.uploadFile(item.file, (percent) => {
+                  setProcessingFiles(prev => prev.map(p =>
+                      p.id === item.id ? { ...p, progress: percent } : p
+                  ));
+              });
+          } catch (err) {
+              console.error(`Upload failed for ${item.file.name}`, err);
+              // Ensure we remove it or mark as error (removing for now to keep simple)
+          }
+           // Remove from processing list after done
+          setProcessingFiles(prev => prev.filter(p => p.id !== item.id));
+          // Refresh list immediately to show the new file
+          fetchFiles();
+      }
+  };
 
-          if (isImage) {
-               // OCR Logic for Images
-               try {
-                   await Tesseract.recognize(
-                      file,
-                      'eng',
-                      {
-                          logger: m => {
-                              if (m.status === 'recognizing text') {
-                                  setFiles(prev => prev.map(f => f.name === file.name ? { ...f, progress: Math.floor(m.progress * 100) } : f));
-                              }
-                          }
-                      }
-                   );
-                   // Success
-                   setFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'Indexed', progress: 100 } : f));
-               } catch (err) {
-                   console.error("OCR Failed", err);
-                   setFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'Failed (OCR Error)', progress: 0 } : f));
-               }
-          } else {
-              // Simulate Upload for other files
-              let p = 0;
-              const interval = setInterval(() => {
-                  p += 10;
-                  if (p > 100) {
-                      clearInterval(interval);
-                      setFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'Indexed', progress: 100 } : f));
-                  } else {
-                      setFiles(prev => prev.map(f => f.name === file.name ? { ...f, progress: p } : f));
-                  }
-              }, 200);
+  const handleDelete = async (filename: string) => {
+      if (window.confirm(`Are you sure you want to delete ${filename}?`)) {
+          try {
+              await HeatGuardAPI.deleteFile(filename);
+              fetchFiles();
+          } catch (e) {
+              console.error("Failed to delete file", e);
           }
       }
   };
@@ -872,7 +890,7 @@ const DataSourcesView = () => {
   <div className="h-full flex flex-col gap-6">
     <div className="bg-card p-6 rounded-2xl border-2 border-border shadow-3d flex-shrink-0">
       <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Database size={24} className="text-secondary" /> Knowledge Base Management</h2>
-      <p className="text-sm text-muted-foreground/80 mb-6">Manage the documents and datasets used by the RAG engine to generate protocols. Supports PDF, Excel, and Image (OCR) uploads.</p>
+      <p className="text-sm text-muted-foreground/80 mb-6">Manage the documents and datasets used by the RAG engine to generate protocols. Supports PDF (including scanned), Excel, and Image (OCR) uploads.</p>
 
       {/* Searchable/Upload Area */}
       <div
@@ -920,40 +938,89 @@ const DataSourcesView = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-             {files.map((file, i) => (
+             {/* Processing Files (Client Side) */}
+             {processingFiles.map((item) => (
+                <tr key={item.id} className="hover:bg-muted/5 group bg-muted/5">
+                  <td className="p-4 font-medium flex items-center gap-3">
+                    <div className="p-2 bg-muted rounded-lg text-muted-foreground">
+                        <FileText size={16} />
+                    </div>
+                    {item.file.name}
+                  </td>
+                  <td className="p-4 text-muted-foreground">{item.file.type || 'FILE'}</td>
+                  <td className="p-4 text-muted-foreground font-mono text-xs">{(item.file.size / 1024 / 1024).toFixed(2)} MB</td>
+                  <td className="p-4">
+                      <div className="flex flex-col gap-1 w-24">
+                          <div className="flex justify-between text-[10px] font-bold text-primary">
+                             <span>Indexing...</span>
+                             <span>{item.progress}%</span>
+                          </div>
+                          <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-primary transition-all duration-300 ease-out"
+                                style={{ width: `${item.progress}%` }}
+                              />
+                          </div>
+                      </div>
+                  </td>
+                  <td className="p-4 text-right"></td>
+                </tr>
+             ))}
+
+             {/* Persisted Files (Server Side) */}
+             {files.map((file, i) => {
+                const progressMatch = file.status?.match(/Processing Page (\d+)\/(\d+)/);
+                const progress = progressMatch
+                    ? Math.round((parseInt(progressMatch[1]) / parseInt(progressMatch[2])) * 100)
+                    : null;
+
+                return (
                 <tr key={i} className="hover:bg-muted/5 group">
                   <td className="p-4 font-medium flex items-center gap-3">
                     <div className="p-2 bg-muted rounded-lg text-muted-foreground">
                         <FileText size={16} />
                     </div>
-                    {file.name}
+                    {file.filename}
                   </td>
-                  <td className="p-4 text-muted-foreground">{file.type.split('/')[1]?.toUpperCase() || 'FILE'}</td>
-                  <td className="p-4 text-muted-foreground font-mono text-xs">{file.size}</td>
+                  <td className="p-4 text-muted-foreground">{file.content_type?.split('/')[1]?.toUpperCase() || 'FILE'}</td>
+                  <td className="p-4 text-muted-foreground font-mono text-xs">{(file.size_bytes / 1024 / 1024).toFixed(2)} MB</td>
                   <td className="p-4">
-                      {file.status === 'Processing' ? (
-                          <div className="flex items-center gap-2">
-                              <div className="h-1.5 w-24 bg-muted rounded-full overflow-hidden">
-                                  <div className="h-full bg-primary transition-all duration-300" style={{ width: `${file.progress}%` }}></div>
+                      {progress !== null ? (
+                          <div className="flex flex-col gap-1 w-32">
+                              <div className="flex justify-between text-[10px] font-bold text-yellow-500">
+                                 <span>Processing...</span>
+                                 <span>{progress}%</span>
                               </div>
-                              <span className="text-xs font-bold text-primary">{file.progress}%</span>
+                              <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-yellow-500 transition-all duration-300 ease-out"
+                                    style={{ width: `${progress}%` }}
+                                  />
+                              </div>
+                              <span className="text-[9px] text-muted-foreground whitespace-nowrap">{file.status}</span>
                           </div>
                       ) : (
-                          <span className={`text-xs px-2 py-1 rounded-full font-bold ${file.status === 'Indexed' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
-                              {file.status}
+                          <span className={`text-xs px-2 py-1 rounded-full font-bold ${
+                              (file.status || 'Indexed') === 'Indexed' ? 'bg-green-500/10 text-green-500' :
+                              (file.status || 'Indexed') === 'Failed' ? 'bg-red-500/10 text-red-500' :
+                              'bg-yellow-500/10 text-yellow-500'
+                          }`}>
+                              {file.status || 'Indexed'}
                           </span>
                       )}
                   </td>
                   <td className="p-4 text-right">
                     <button
+                        onClick={() => handleDelete(file.filename)}
                         className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
-                        onClick={() => setFiles(prev => prev.filter((_, idx) => idx !== i))}
+                        title="Delete File"
                     >
                         <Trash2 size={16} />
                     </button>
                   </td>
                 </tr>
-             ))}
+                );
+             })}
           </tbody>
         </table>
       </div>

@@ -66,6 +66,23 @@ export interface RankingsResponse {
     rankings: DistrictRanking[];
 }
 
+export interface UploadedFile {
+    id: number;
+    filename: string;
+    upload_date: string;
+    size_bytes: number;
+    content_type: string;
+    description: string;
+    status: string;
+}
+
+export interface DocumentUploadResponse {
+    filename: string;
+    status: string;
+    message: string;
+    chunks_processed: number;
+}
+
 // --- API Client ---
 
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -98,7 +115,7 @@ export const HeatGuardAPI = {
 
     // Get all district rankings (auto-fetched data)
     getDistrictRankings: async (): Promise<RankingsResponse> => {
-        const response = await api.get<RankingsResponse>('/districts/rankings');
+        const response = await api.get<RankingsResponse>('/rankings');
         return response.data;
     },
 
@@ -106,5 +123,31 @@ export const HeatGuardAPI = {
     getDistrictHistory: async (districtName: string): Promise<DistrictRanking[]> => {
         const response = await api.get<DistrictRanking[]>(`/districts/${districtName}/history`);
         return response.data;
-    }
+    },
+
+    getFiles: async (): Promise<UploadedFile[]> => {
+        const response = await api.get<UploadedFile[]>('/files');
+        return response.data;
+    },
+
+    uploadFile: async (file: File, onProgress?: (progress: number) => void): Promise<DocumentUploadResponse> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const response = await api.post<DocumentUploadResponse>('/upload', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+            onUploadProgress: (progressEvent) => {
+                if (progressEvent.total) {
+                    const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                    if (onProgress) onProgress(percentCompleted);
+                }
+            },
+        });
+        return response.data;
+    },
+
+    deleteFile: async (filename: string): Promise<void> => {
+        await api.delete(`/files/${encodeURIComponent(filename)}`);
+    },
 };
