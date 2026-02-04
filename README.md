@@ -1,20 +1,40 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# HeatGuard AI Frontend
 
-# Run and deploy your AI Studio app
+React + TypeScript + Vite dashboard for **HeatGuard AI**.
 
-This contains everything you need to run your app locally.
+Key UI features include:
+- High Priority Alerts (top-at-risk districts)
+- 7-day trend chart
+- Risk map with district selection and AI recommendations
+- PDF export for analysis reports
 
-View your app in AI Studio: https://ai.studio/apps/drive/1PymtSQofrfDWKCHTBpxgqJiA0Vw7e8yP
+## Prerequisites
 
-## Run Locally
+- Node.js (LTS recommended)
 
-**Prerequisites:**  Node.js
+## Install
 
+```bash
+npm install
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Run (dev)
+
+```bash
+npm run dev
+```
+
+The app will be available at the Vite URL shown in the terminal (typically `http://localhost:5173`).
+
+## Build
+
+```bash
+npm run build
+```
+
+## Configure API base URL
+
+This frontend calls the FastAPI backend (typically `http://localhost:8000`).
+
+If you need to change the backend URL, check `frontend/api.ts` (and any environment-based configuration your deployment uses).
+
