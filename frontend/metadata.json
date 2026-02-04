@@ -1,0 +1,5 @@
+{
+  "name": "HeatGuard AI",
+  "description": "A Bubblegum-themed heatwave early warning dashboard tracking temperature, risk levels, and hospital load forecasts.",
+  "requestFramePermissions": []
+}
