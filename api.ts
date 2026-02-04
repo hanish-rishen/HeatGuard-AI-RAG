@@ -27,6 +27,7 @@ export interface SourceDocument {
 export interface AnalysisResponse {
     predicted_hospitalization_load: number;
     heat_index: number;
+    lst: number;
     risk_status: 'Green' | 'Amber' | 'Red';
     risk_level_description: string;
     prescriptive_advice: string;
@@ -41,6 +42,28 @@ export interface HealthCheckResponse {
     model_loaded: boolean;
     chroma_connected: boolean;
     version: string;
+}
+
+export interface DistrictRanking {
+    district_name: string;
+    lat: number;
+    lon: number;
+    risk_score: number;
+    risk_status: 'Green' | 'Amber' | 'Red';
+    heat_index: number;
+    max_temp: number;
+    humidity: number;
+    lst: number;
+    pct_children: number;
+    pct_outdoor_workers: number;
+    pct_vulnerable_social: number;
+    date?: string; // Added optional date for historical data
+}
+
+export interface RankingsResponse {
+    date: string;
+    total_districts: number;
+    rankings: DistrictRanking[];
 }
 
 // --- API Client ---
@@ -70,6 +93,18 @@ export const HeatGuardAPI = {
     // Main Analysis Endpoint
     analyzeDistrict: async (data: DistrictData): Promise<AnalysisResponse> => {
         const response = await api.post<AnalysisResponse>('/analyze', { district_data: data });
+        return response.data;
+    },
+
+    // Get all district rankings (auto-fetched data)
+    getDistrictRankings: async (): Promise<RankingsResponse> => {
+        const response = await api.get<RankingsResponse>('/districts/rankings');
+        return response.data;
+    },
+
+    // Get trend history for a district
+    getDistrictHistory: async (districtName: string): Promise<DistrictRanking[]> => {
+        const response = await api.get<DistrictRanking[]>(`/districts/${districtName}/history`);
         return response.data;
     }
 };

@@ -60,13 +60,25 @@
       --radius: 0.5rem;
     }
 
+    html, body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+
     body {
       font-family: 'JetBrains Mono', monospace;
       background-color: var(--background);
       color: var(--foreground);
       letter-spacing: 0px;
-      zoom: 0.67;
-      min-height: 100vh;
+      /* zoom: 0.67; Removed to fix viewport height scaling */
+    }
+
+    #root {
+      height: 100%;
+      width: 100%;
     }
 
     /* Custom Scrollbar */
