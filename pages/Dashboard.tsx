@@ -56,6 +56,7 @@ import { LogConsole } from '../components/LogConsole';
 import { RankingsView } from './RankingsPage';
 import { Settings } from 'lucide-react'; // Added Settings import
 import ReactMarkdown from 'react-markdown'; // Added markdown support
+import { createPortal } from 'react-dom';
 import { jsPDF } from 'jspdf';
 import { ConfirmModal } from '../components/ConfirmModal';
 import html2canvas from 'html2canvas';
@@ -1022,16 +1023,16 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                       )}
                    </div>
 
-                    {/* AI recommendation modal */}
-                    {aiAdviceModalOpen && (
-                      <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4">
+                    {/* AI recommendation modal (portal into map container only) */}
+                    {aiAdviceModalOpen && containerRef.current && createPortal(
+                      <div className="absolute inset-0 z-[9999] flex items-center justify-center p-2 sm:p-4">
                         <button
                           type="button"
                           className="absolute inset-0 bg-black/70"
                           aria-label="Close"
                           onClick={() => setAiAdviceModalOpen(false)}
                         />
-                        <div className="relative w-[min(1800px,calc(100vw-1rem))] h-[92vh] sm:h-[94vh] overflow-hidden rounded-2xl border border-slate-600 bg-[#0f1f29] shadow-2xl">
+                        <div className="relative w-full max-w-[1100px] md:max-w-[1400px] h-full max-h-[calc(100%-1rem)] overflow-hidden rounded-2xl border border-slate-600 bg-[#2a3b47]/95 shadow-2xl">
                           <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-slate-700">
                             <div>
                               <div className="text-base sm:text-lg font-bold text-white">AI Recommendation</div>
@@ -1047,7 +1048,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                             </button>
                           </div>
 
-                          <div className="p-5 sm:p-6 overflow-y-auto h-[calc(92vh-64px)] sm:h-[calc(94vh-64px)]">
+                          <div className="p-5 sm:p-6 overflow-y-auto h-[calc(100%-64px)]">
                             {aiAdviceError ? (
                               <div className="text-base text-red-300 leading-relaxed">
                                 Unable to generate recommendation ({aiAdviceError}).
@@ -1055,18 +1056,19 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                             ) : aiAdviceLoading ? (
                               <div className="flex items-center gap-3 text-base text-slate-200">
                                 <span className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                                Generating recommendation…
+                                Generating recommendation
                               </div>
                             ) : (
                               <div className="prose prose-invert prose-lg max-w-none text-slate-100 leading-relaxed prose-headings:text-white prose-ul:my-4 prose-ol:my-4 prose-li:my-2">
                                 <ReactMarkdown>
-                                  {aiAdvice || '—'}
+                                  {aiAdvice || ''}
                                 </ReactMarkdown>
                               </div>
                             )}
                           </div>
                         </div>
-                      </div>
+                      </div>,
+                      containerRef.current
                     )}
                </div>
           </div>
