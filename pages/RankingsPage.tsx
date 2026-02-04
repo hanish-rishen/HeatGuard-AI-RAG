@@ -21,7 +21,7 @@ export const RankingsView: React.FC<{ rankings: DistrictRanking[]; loading: bool
                     Full District Risk Rankings
                 </h2>
                 <p className="text-sm text-muted-foreground/80 mt-1">
-                    Real-time Analysis of All Monitored Districts | Sorted by Risk Score
+                    Real-time analysis of all monitored districts | Sorted by heat hospitalization risk
                 </p>
 
                 {/* Legend */}
@@ -44,7 +44,7 @@ export const RankingsView: React.FC<{ rankings: DistrictRanking[]; loading: bool
                       <tr>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Rank</th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">District</th>
-                        <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Risk Score</th>
+                        <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Heat hospitalization risk</th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Population Demographics</th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">LST <span className="text-[10px] lowercase">(°C)</span></th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Air Temp <span className="text-[10px] lowercase">(°C)</span></th>

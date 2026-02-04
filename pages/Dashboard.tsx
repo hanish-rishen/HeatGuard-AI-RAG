@@ -57,6 +57,8 @@ import { RankingsView } from './RankingsPage';
 import { Settings } from 'lucide-react'; // Added Settings import
 import ReactMarkdown from 'react-markdown'; // Added markdown support
 import { jsPDF } from 'jspdf';
+import { ConfirmModal } from '../components/ConfirmModal';
+import html2canvas from 'html2canvas';
 
 // --- Types ---
 
@@ -363,20 +365,80 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedDistrict, setSelectedDistrict] = useState<DistrictRanking | null>(null);
 
-  // 1. Load Base Map (India States) from local asset (avoids CORS / remote failures)
+  // 1. Load Base Map (India States)
+  // Prefer a real remote GeoJSON (since the local placeholder may be empty),
+  // but fall back to the local asset to support offline / locked-down environments.
   useEffect(() => {
-    setLoading(true);
-    fetch('/india_states.geojson')
-      .then(res => res.json())
-      .then(data => {
-        setGeoData(data);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error('Failed to load map base:', err);
+    let aborted = false;
+
+    const loadGeoJson = async () => {
+      setLoading(true);
+      setError(null);
+
+      // Sources (country outline). We only need a valid MultiPolygon/Polygon FeatureCollection.
+      // Natural Earth (via GitHub mirror) is stable and avoids per-request tokens.
+      const sources = [
+        // Remote fallback (world countries; we'll filter to India)
+        'https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson',
+        // Local asset (may be empty placeholder)
+        '/india_states.geojson'
+      ];
+
+      const tryFetch = async (url: string) => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      };
+
+      for (const url of sources) {
+        try {
+          const data = await tryFetch(url);
+          if (aborted) return;
+
+          // If we loaded the world dataset, extract India.
+          const features = Array.isArray(data?.features) ? data.features : [];
+          const isWorldDataset = url.includes('geo-countries') || features.length > 250;
+
+          let normalized = data;
+          if (isWorldDataset) {
+            const india = features.find((f: any) => {
+              const p = f?.properties || {};
+              return (
+                p.ADMIN === 'India' ||
+                p.name === 'India' ||
+                p.ISO_A3 === 'IND' ||
+                p.ISO3 === 'IND' ||
+                p.ISO === 'IND'
+              );
+            });
+
+            if (!india) throw new Error('India feature not found in world dataset');
+            normalized = { type: 'FeatureCollection', features: [india] };
+          }
+
+          // Reject empty/invalid GeoJSON so we can try next source.
+          if (!Array.isArray(normalized?.features) || normalized.features.length === 0) {
+            throw new Error('Empty GeoJSON features');
+          }
+
+          setGeoData(normalized);
+          setLoading(false);
+          return;
+        } catch (err) {
+          console.warn(`[IndiaMapUI] GeoJSON source failed: ${url}`, err);
+        }
+      }
+
+      if (!aborted) {
         setError('Could not load India map geojson');
         setLoading(false);
-      });
+      }
+    };
+
+    loadGeoJson();
+    return () => {
+      aborted = true;
+    };
   }, []);
 
   // 2. Handle Search Filtering
@@ -396,8 +458,10 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
   useEffect(() => {
     if (!svgRef.current) return;
 
-    const width = svgRef.current.clientWidth || 800;
-    const height = svgRef.current.clientHeight || 600;
+  // In simplified tiles, the container can momentarily measure 0px.
+  // Use a conservative fallback so we still render (and don't appear blank).
+  const width = svgRef.current.clientWidth || (simplified ? 360 : 800);
+  const height = svgRef.current.clientHeight || (simplified ? 260 : 600);
 
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove(); // Clear canvas
@@ -437,7 +501,8 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
     const validPoints = rankings.filter(d => Number.isFinite(d.lat) && Number.isFinite(d.lon));
 
     // If geojson is empty, show a non-fatal warning rather than a blank map.
-    if (!loading && geoData && Array.isArray(geoData.features) && geoData.features.length === 0 && !error) {
+    // Hide this warning in simplified tiles so the Risk Overview card doesn't look "blank".
+    if (!simplified && !loading && geoData && Array.isArray(geoData.features) && geoData.features.length === 0 && !error) {
       setError('Base map polygons are unavailable (empty GeoJSON). Showing district pins only.');
     }
 
@@ -636,7 +701,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
 
                <div className="space-y-3">
                    <div className="bg-slate-800/50 p-3 rounded-lg flex justify-between items-center">
-                       <span className="text-sm text-slate-300">Risk Score</span>
+                       <span className="text-sm text-slate-300">Heat hospitalization risk</span>
                        <span className={`text-xl font-bold ${selectedDistrict.risk_score > 0.75 ? 'text-red-400' : 'text-emerald-400'}`}>
                            {selectedDistrict.risk_score.toFixed(1)}
                        </span>
@@ -1496,8 +1561,11 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
       // Build an offscreen report DOM.
       const container = document.createElement('div');
       container.style.position = 'fixed';
-      container.style.left = '-10000px';
-      container.style.top = '0';
+  // Keep it offscreen but still renderable. Some browsers/extensions fail capturing
+  // extremely negative offsets.
+  container.style.left = '0';
+  container.style.top = '0';
+  container.style.transform = 'translateX(-120%)';
       container.style.width = '900px';
       container.style.background = '#ffffff';
       container.style.color = '#0f172a';
@@ -1505,6 +1573,7 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
       container.style.padding = '24px';
       container.style.border = '1px solid #e5e7eb';
       container.style.borderRadius = '16px';
+  container.style.zIndex = '-1';
 
       const header = document.createElement('div');
       header.style.display = 'flex';
@@ -1692,7 +1761,7 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
       }
 
       // Render to canvas.
-      const canvas = await (window as any).html2canvas(container, {
+  const canvas = await html2canvas(container, {
         backgroundColor: '#ffffff',
         scale: 2,
         useCORS: true
@@ -1744,16 +1813,20 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
       doc.save(`heatguard-report_${safeDistrict}_${dateStr}.pdf`);
     } catch (e) {
       console.error(e);
-      // Fallback to JSON if PDF generation fails for any reason.
-      const blob = new Blob([JSON.stringify(report.payload, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `heatguard-report_${safeDistrict}_${dateStr}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      // If the HTML->canvas approach fails, fall back to a simple jsPDF text PDF (never JSON).
+      try {
+        const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+        doc.setFontSize(16);
+        doc.text('HeatGuard AI — Daily Risk Report', 40, 50);
+        doc.setFontSize(11);
+        doc.text(`Generated: ${new Date(report.createdAt).toLocaleString()}`, 40, 75);
+        doc.text(`District: ${String(report.districtName || '—')}`, 40, 95);
+        doc.text(`Status: ${String(report.riskStatus || '—')}`, 40, 115);
+        doc.text('Note: The detailed PDF layout failed to render on this device/browser.', 40, 145);
+        doc.save(`heatguard-report_${safeDistrict}_${dateStr}.pdf`);
+      } catch (e2) {
+        console.error(e2);
+      }
     }
   };
 
@@ -1968,16 +2041,41 @@ const DashboardView: React.FC<DashboardViewProps> = ({
              const history = await HeatGuardAPI.getDistrictHistory(targetDistrict);
 
              // Format for chart
-             const chartData = history.map(h => ({
-                 date: h.date, // Assuming backend returns date field in ranking object
-                 max_temp: h.max_temp,
+             const chartDataRaw = (Array.isArray(history) ? history : [])
+               .filter((h: any) => h?.date)
+               .map((h: any) => ({
+                 date: h.date,
+                 max_temp: typeof h.max_temp === 'number' ? h.max_temp : Number(h.max_temp),
                  shortDate: new Date(h.date || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-             }));
+               }))
+               .filter((d: any) => d?.date && Number.isFinite(d?.max_temp));
 
              // Sort by date ascending
-             chartData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+             chartDataRaw.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-             setTrendData(chartData);
+             // Ensure we always show the last 7 calendar days (missing days become nulls)
+             const byDay = new Map<string, { date: string; max_temp: number; shortDate: string }>();
+             chartDataRaw.forEach((row: any) => {
+               const dayKey = new Date(row.date).toISOString().slice(0, 10);
+               byDay.set(dayKey, row);
+             });
+
+             const days: any[] = [];
+             const today = new Date();
+             today.setHours(0, 0, 0, 0);
+             for (let i = 6; i >= 0; i--) {
+               const d = new Date(today);
+               d.setDate(today.getDate() - i);
+               const key = d.toISOString().slice(0, 10);
+               const row = byDay.get(key);
+               days.push({
+                 date: key,
+                 shortDate: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                 max_temp: row?.max_temp ?? null
+               });
+             }
+
+             setTrendData(days);
          } catch (e) {
              console.error("Failed to fetch trend data", e);
              setTrendData([]);
@@ -2107,7 +2205,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                              <h4 className="font-bold text-lg text-foreground">{district.district_name} District</h4>
                              <div className="flex items-center gap-2 mt-1 mb-2">
                                 <span className="bg-destructive text-destructive-foreground text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Critical</span>
-                                <span className="text-sm text-foreground font-medium">Risk Score: {(district.risk_score * 100).toFixed(0)}%</span>
+                                <span className="text-sm text-foreground font-medium">Heat hospitalization risk: {(district.risk_score * 100).toFixed(0)}%</span>
                              </div>
                              <p className="text-sm text-muted-foreground/90">
                                 High probability of heatwave impact. {district.max_temp.toFixed(1)}°C detected.
@@ -2382,17 +2480,6 @@ const Dashboard: React.FC<DashboardProps> = ({ rankings, rankingsLoading, logs }
 
         <div className="p-4 flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden">
 
-          <button
-            className={`
-              w-full bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl shadow-3d-sm active:translate-y-[2px] active:shadow-none mb-8 flex items-center justify-center gap-2 transition-all
-              ${isSidebarCollapsed && !isMobileMenuOpen ? 'py-3 px-0 rounded-full aspect-square' : 'py-3 px-4'}
-            `}
-            title="New Simulation"
-          >
-            <PlusCircle size={20} />
-            {(!isSidebarCollapsed || isMobileMenuOpen) && <span>New Simulation</span>}
-          </button>
-
           <div className="space-y-6">
             <div>
               <div className={`px-3 text-xs font-bold text-sidebar-foreground/70 uppercase tracking-wider mb-2 transition-opacity duration-300 ${isSidebarCollapsed && !isMobileMenuOpen ? 'opacity-0 h-0 overflow-hidden' : 'opacity-100'}`}>Platform</div>
@@ -2485,20 +2572,7 @@ const Dashboard: React.FC<DashboardProps> = ({ rankings, rankingsLoading, logs }
             <span className="text-foreground font-medium capitalize truncate">{currentView.replace('rag', 'RAG Engine').replace('datasources', 'Data Sources')}</span>
           </div>
 
-          <div className="flex items-center gap-3 w-full md:w-auto justify-end">
-            <div className="relative w-full md:w-auto">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-              <input
-                type="text"
-                placeholder="Search..."
-                className="bg-card border-2 border-border rounded-xl pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-primary transition-colors text-foreground placeholder:text-muted-foreground/60"
-              />
-            </div>
-            <button className="p-2 bg-card border-2 border-border rounded-xl shadow-3d-sm hover:translate-y-[-1px] transition-all relative hover:shadow-3d-hover flex-shrink-0">
-              <Bell size={20} />
-              <span className="absolute top-1 right-2 w-2 h-2 bg-destructive rounded-full"></span>
-            </button>
-          </div>
+          <div className="flex items-center gap-3 w-full md:w-auto justify-end" />
         </div>
 
         {/* View Switcher */}
@@ -2515,7 +2589,7 @@ const Dashboard: React.FC<DashboardProps> = ({ rankings, rankingsLoading, logs }
             logs={logs}
           />
         )}
-        {currentView === 'map' && <div className="flex-1 w-full h-full relative"><IndiaMapUI rankings={rankings} /></div>}
+  {currentView === 'map' && <div className="flex-1 w-full h-full min-h-[600px] relative"><IndiaMapUI rankings={rankings} /></div>}
         {currentView === 'rag' && <RagEngineView />}
   {currentView === 'datasources' && <DataSourcesView />}
   {currentView === 'reports' && <ReportsView analysisResult={analysisResult} />}
