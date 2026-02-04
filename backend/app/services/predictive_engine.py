@@ -1,6 +1,6 @@
 """
 CONTEXT: Predictive Engine - XGBoost model for hospitalization risk prediction.
-NEIGHBORHOOD: 
+NEIGHBORHOOD:
     - Imported by: app/api/routes.py
     - Imports from: app/core/config.py
     - Uses models: ../Models/heat_health_model_v1.pkl, district_encoder.pkl
@@ -22,13 +22,13 @@ from app.core.config import get_settings, get_backend_dir
 class PredictiveEngine:
     """
     PURPOSE: XGBoost-based prediction engine for heat-health impact assessment.
-    
+
     RELATIONSHIPS:
         - Loads pre-trained models from ../Models/
         - Uses Rothfusz Regression for Heat Index calculation
-    
+
     CONSUMERS: analyze_district() in routes.py
-    
+
     The model predicts hospitalization load based on:
     - Exposure: Max_Temp, LST, Humidity, Heat_Index
     - Sensitivity: pct_children, pct_outdoor_workers
@@ -36,44 +36,44 @@ class PredictiveEngine:
     - Temporal: Month, DayOfYear
     - Geographic: District_Encoded
     """
-    
+
     _instance: Optional['PredictiveEngine'] = None
     _initialized: bool = False
-    
+
     def __new__(cls):
         """Singleton pattern to ensure model is loaded only once."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __init__(self):
         """Initialize the predictive engine with lazy loading."""
         if PredictiveEngine._initialized:
             return
-        
+
         self.model = None
         self.encoder = None
         self.settings = get_settings()
         self._load_models()
         PredictiveEngine._initialized = True
-    
+
     def _load_models(self) -> None:
         """
         PURPOSE: Load the XGBoost model and district encoder from disk.
-        
+
         Logic Flow:
         1. Resolve absolute paths from config
         2. Load the pickled XGBoost model
         3. Load the LabelEncoder for district names
-        
+
         WHY: Models are loaded at startup to avoid I/O during predictions.
         """
         backend_dir = get_backend_dir()
-        
+
         # Step 1: Resolve model paths
         model_path = backend_dir / self.settings.model_path
         encoder_path = backend_dir / self.settings.encoder_path
-        
+
         # Step 2: Load XGBoost model
         try:
             self.model = joblib.load(model_path)
@@ -86,7 +86,7 @@ class PredictiveEngine:
             self.model = None
             self.encoder = None
             return
-        
+
         # Step 3: Load district encoder
         try:
             self.encoder = joblib.load(encoder_path)
@@ -97,30 +97,30 @@ class PredictiveEngine:
             self.model = None
             self.encoder = None
             return
-    
+
     def calculate_heat_index(self, temperature_c: float, humidity: float) -> float:
         """
         PURPOSE: Calculate Heat Index using Rothfusz Regression.
-        
+
         RELATIONSHIPS: Used in predict() method before model inference.
-        
+
         WHY: Heat Index captures the non-linear interaction between temperature
         and humidity that affects human thermoregulation. A 42┬░C day with high
         humidity is far more dangerous than the same temperature with low humidity.
-        
+
         Formula: HI = cΓéü + cΓééT + cΓéâR + cΓéäTR + cΓéàT┬▓ + cΓéåR┬▓ + cΓéçT┬▓R + cΓéêTR┬▓ + cΓéëT┬▓R┬▓
-        
+
         Args:
             temperature_c: Air temperature in Celsius
             humidity: Relative humidity (0-100%)
-        
+
         Returns:
             Heat Index in Celsius
         """
         # Step 1: Convert Celsius to Fahrenheit (Rothfusz uses Fahrenheit)
         T = (temperature_c * 9/5) + 32
         RH = humidity
-        
+
         # Step 2: Rothfusz Regression coefficients
         c1 = -42.379
         c2 = 2.04901523
@@ -131,27 +131,27 @@ class PredictiveEngine:
         c7 = 1.22874e-3
         c8 = 8.5282e-4
         c9 = -1.99e-6
-        
+
         # Step 3: Calculate Heat Index in Fahrenheit
         HI_F = (c1 + (c2 * T) + (c3 * RH) + (c4 * T * RH) +
                 (c5 * T**2) + (c6 * RH**2) + (c7 * T**2 * RH) +
                 (c8 * T * RH**2) + (c9 * T**2 * RH**2))
-        
+
         # Step 4: Convert back to Celsius
         HI_C = (HI_F - 32) * 5/9
-        
+
         return round(HI_C, 2)
-    
+
     def encode_district(self, district_name: str) -> int:
         """
         PURPOSE: Encode district name to integer using pre-trained LabelEncoder.
-        
+
         WHY: XGBoost requires numeric features. The encoder maps 640 district
         names to unique integers.
-        
+
         Args:
             district_name: Name of the district (e.g., "Adilabad")
-        
+
         Returns:
             Encoded integer, or 0 if district not found
         """
@@ -161,7 +161,7 @@ class PredictiveEngine:
             # District not in encoder - return default
             print(f"[PredictiveEngine] WARNING: District '{district_name}' not found, using default encoding")
             return 0
-    
+
     def predict(
         self,
         district_name: str,
@@ -175,13 +175,13 @@ class PredictiveEngine:
     ) -> Tuple[float, float]:
         """
         PURPOSE: Predict hospitalization load for a district.
-        
+
         RELATIONSHIPS:
             - Calls calculate_heat_index() for feature engineering
             - Calls encode_district() for geographic encoding
-        
+
         CONSUMERS: /analyze endpoint
-        
+
         Logic Flow:
         1. Parse date to extract temporal features (Month, DayOfYear)
         2. Calculate Heat Index from temperature and humidity
@@ -189,7 +189,7 @@ class PredictiveEngine:
         4. Prepare feature array matching training order
         5. Run XGBoost prediction
         6. Ensure non-negative output
-        
+
         Args:
             district_name: Name of the district
             max_temp: Maximum air temperature (┬░C)
@@ -199,7 +199,7 @@ class PredictiveEngine:
             pct_outdoor_workers: Percentage of outdoor workers
             pct_vulnerable_social: Percentage of vulnerable social groups
             date_str: Date in YYYY-MM-DD format
-        
+
         Returns:
             Tuple of (predicted_hospitalization_load, heat_index)
         """
@@ -212,13 +212,13 @@ class PredictiveEngine:
         date_dt = datetime.strptime(date_str, "%Y-%m-%d")
         month = date_dt.month
         day_of_year = date_dt.timetuple().tm_yday
-        
+
         # Step 2: Calculate Heat Index
         heat_index = self.calculate_heat_index(max_temp, humidity)
-        
+
         # Step 3: Encode district
         district_encoded = self.encode_district(district_name)
-        
+
         # Step 4: Prepare feature array (MUST match training order!)
         # Training order: Max_Temp, LST, Humidity, Heat_Index,
         #                 pct_children, pct_outdoor_workers, pct_vulnerable_social,
@@ -235,19 +235,19 @@ class PredictiveEngine:
             day_of_year,
             district_encoded
         ]])
-        
+
         # Step 5: Run prediction
         prediction = self.model.predict(features)[0]
-        
+
         # Step 6: Ensure non-negative output
         prediction = max(0, prediction)
-        
+
         return round(prediction, 4), heat_index
-    
+
     def is_loaded(self) -> bool:
         """Check if models are successfully loaded."""
         return self.model is not None and self.encoder is not None
-    
+
     def get_supported_districts(self) -> list:
         """Return list of all 640 supported district names."""
         if self.encoder is not None:
