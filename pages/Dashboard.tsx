@@ -55,6 +55,8 @@ import { useNavigate } from 'react-router-dom';
 import { LogConsole } from '../components/LogConsole';
 import { RankingsView } from './RankingsPage';
 import { Settings } from 'lucide-react'; // Added Settings import
+import ReactMarkdown from 'react-markdown'; // Added markdown support
+import { jsPDF } from 'jspdf';
 
 // --- Types ---
 
@@ -131,14 +133,14 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, change, trend, isIncr
 
   const IconComponent = icon ? (
     <div className={`p-2.5 rounded-xl ${trendColor.replace('text-', 'bg-')}/10 ${trendColor} mb-3 inline-block shadow-sm`}>
-      {React.cloneElement(icon as React.ReactElement, { size: 22, strokeWidth: 2 })}
+      {React.cloneElement(icon as React.ReactElement, { size: 22, strokeWidth: 2 } as any)}
     </div>
   ) : null;
 
   return (
     <div className="bg-card rounded-2xl border border-border/60 shadow-sm p-5 hover:shadow-md transition-all duration-300 hover:border-primary/20 group relative overflow-hidden">
       <div className="absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity transform group-hover:scale-110 duration-700 pointer-events-none">
-          {icon && React.cloneElement(icon as React.ReactElement, { size: 140 })}
+          {icon && React.cloneElement(icon as React.ReactElement, { size: 140 } as any)}
       </div>
 
       <div className="flex justify-between items-start mb-2 relative z-10">
@@ -361,23 +363,18 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedDistrict, setSelectedDistrict] = useState<DistrictRanking | null>(null);
 
-  // 1. Fetch Base Map (India States)
+  // 1. Load Base Map (India States) from local asset (avoids CORS / remote failures)
   useEffect(() => {
-    // Using a reliable source for India States GeoJSON
-    // Alternative: https://raw.githubusercontent.com/Subhash9325/GeoJson-Data-of-Indian-States/master/Indian_States
-    fetch("https://raw.githubusercontent.com/geohacker/india/master/state/india_telengana.geojson") // TODO: Switch to full India map if needed, or stick to user context
-      // Actually, let's use a full India map to be safe since the data seems national.
-      // Replacing with valid India States GeoJSON URL
-      .then(() => fetch("https://raw.githubusercontent.com/Subhash9325/GeoJson-Data-of-Indian-States/master/Indian_States"))
+    setLoading(true);
+    fetch('/india_states.geojson')
       .then(res => res.json())
       .then(data => {
         setGeoData(data);
         setLoading(false);
       })
       .catch(err => {
-        console.error("Failed to load map base:", err);
-        // Fallback to plotting just points if map fails?
-        // For now, let's just set loading false and try to render what we can
+        console.error('Failed to load map base:', err);
+        setError('Could not load India map geojson');
         setLoading(false);
       });
   }, []);
@@ -429,11 +426,11 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
     }
 
     // --- Draw District Points ---
-    // Color Scale based on Risk Score (0-1 range)
+    // Color Scale based on Risk Score (0..1)
     const colorScale = (score: number) => {
-        if (score > 0.75) return "#ef4444"; // High Risk
-        if (score > 0.50) return "#f97316"; // Moderate Risk
-        return "#10b981"; // Low Risk
+      if (score > 0.75) return '#ef4444'; // High Risk
+      if (score > 0.50) return '#f97316'; // Moderate Risk
+      return '#10b981'; // Low Risk
     };
 
     // Plot valid points
@@ -451,9 +448,9 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
     }
 
     // Add Wave/Pulse effect for high risk districts
-    if (!simplified) {
-        g.selectAll(".pulse")
-            .data(validPoints.filter(d => d.risk_score > 0.75))
+  if (!simplified) {
+    g.selectAll(".pulse")
+      .data(validPoints.filter(d => d.risk_score > 0.75))
             .enter()
             .append("circle")
             .attr("cx", d => projection([d.lon, d.lat])?.[0] || 0)
@@ -591,12 +588,12 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                             >
                                 <div className="flex flex-col">
                                     <span className="font-medium text-slate-100">{d.district_name}</span>
-                                    <span className="text-[10px] text-slate-400">rank #{d.rank_id}</span>
+                                    <span className="text-[10px] text-slate-400">Lat: {d.lat.toFixed(2)}</span>
                                 </div>
                                 <span className={`text-xs px-2 py-0.5 rounded-full font-bold
-                                    ${d.risk_score > 75 ? 'bg-red-500/20 text-red-400' :
-                                      d.risk_score > 50 ? 'bg-orange-500/20 text-orange-400' : 'bg-green-500/20 text-green-400'}`}>
-                                    {d.risk_score.toFixed(0)}
+                                    ${d.risk_score > 0.75 ? 'bg-red-500/20 text-red-400' :
+                                      d.risk_score > 0.50 ? 'bg-orange-500/20 text-orange-400' : 'bg-green-500/20 text-green-400'}`}>
+                                    {(d.risk_score * 100).toFixed(0)}
                                 </span>
                             </div>
                         ))}
@@ -665,7 +662,8 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
 
       {/* --- Map Container --- */}
       <div className="flex-1 bg-[#1a2c38] relative flex items-center justify-center overflow-hidden">
-        {loading && <div className="absolute inset-0 flex items-center justify-center text-primary animate-pulse font-bold text-xs">Loading Geospatial Data...</div>}
+        {loading && <div className="absolute inset-0 flex items-center justify-center text-primary animate-pulse font-bold text-xs">Loading India map...</div>}
+        {!loading && error && <div className="absolute inset-0 flex items-center justify-center text-destructive font-bold text-xs">{error}</div>}
         <svg ref={svgRef} className={`w-full h-full block ${simplified ? '' : 'cursor-grab active:cursor-grabbing'}`} style={{background: '#1a2c38'}}></svg>
       </div>
     </div>
@@ -674,13 +672,177 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
 
 // --- RAG Engine View ---
 const RagEngineView = () => {
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<any[]>(() => {
+      const saved = localStorage.getItem('chat_history');
+      return saved ? JSON.parse(saved) : [];
+  });
   const [input, setInput] = useState('');
+  const [reasoning, setReasoning] = useState<string>('');
+  const [context, setContext] = useState<any[]>([]);
+  const [isChatLoading, setIsChatLoading] = useState(false);
+
+  const [selectedSource, setSelectedSource] = useState<any | null>(null);
+
+  const RAG_REASONING_KEY = 'rag_last_reasoning_v1';
+  const RAG_CONTEXT_KEY = 'rag_last_context_v1';
+  const LAST_ANALYSIS_KEY = 'heatguard_last_analysis_v1';
+
+  const [lastDistrictContext, setLastDistrictContext] = useState<string | null>(null);
+  const [topRiskDistrict, setTopRiskDistrict] = useState<{ district_name: string; risk_score?: number; risk_status?: string } | null>(null);
+  const [dailyRankingsDate, setDailyRankingsDate] = useState<string | null>(null);
+  const [topRiskCensus, setTopRiskCensus] = useState<{ pct_children?: number; pct_outdoor_workers?: number; pct_vulnerable_social?: number } | null>(null);
+
+  const buildDistrictContextString = () => {
+    const parts: string[] = [];
+    if (topRiskDistrict?.district_name) {
+      const scoreStr = typeof topRiskDistrict.risk_score === 'number' ? ` score=${topRiskDistrict.risk_score.toFixed(3)}` : '';
+      const statusStr = topRiskDistrict.risk_status ? ` (${topRiskDistrict.risk_status})` : '';
+      const dateStr = dailyRankingsDate ? ` on ${dailyRankingsDate}` : '';
+      parts.push(`Top risk district${dateStr} is ${topRiskDistrict.district_name}${statusStr}.${scoreStr}`);
+    }
+
+    if (topRiskCensus) {
+      const pctChildren = typeof topRiskCensus.pct_children === 'number' ? `${topRiskCensus.pct_children.toFixed(1)}%` : 'n/a';
+      const pctOutdoor = typeof topRiskCensus.pct_outdoor_workers === 'number' ? `${topRiskCensus.pct_outdoor_workers.toFixed(1)}%` : 'n/a';
+      const pctVuln = typeof topRiskCensus.pct_vulnerable_social === 'number' ? `${topRiskCensus.pct_vulnerable_social.toFixed(1)}%` : 'n/a';
+      parts.push(`Static district vulnerability indicators (approx, from dataset): pct_children=${pctChildren}, pct_outdoor_workers=${pctOutdoor}, pct_vulnerable_social=${pctVuln}.`);
+      parts.push('Tailoring instruction: when recommending actions, prioritize measures for outdoor workers, children, and vulnerable groups proportional to these indicators.');
+    }
+
+    return parts.join('\n');
+  };
+
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    localStorage.setItem('chat_history', JSON.stringify(messages));
   }, [messages]);
+
+  const fetchRankingsOnce = async (opts?: { force?: boolean }) => {
+  const force = !!opts?.force;
+
+    // If we're forcing a refresh, clear current state so the user sees it's reloading.
+    if (force) {
+      setTopRiskDistrict(null);
+      setDailyRankingsDate(null);
+      setTopRiskCensus(null);
+    }
+
+    try {
+      await new Promise<void>((resolve) => {
+        const url = force
+          ? `http://localhost:8000/api/districts/rankings?force=1&_ts=${Date.now()}`
+          : 'http://localhost:8000/api/districts/rankings';
+        const eventSource = new EventSource(url);
+
+        const kill = window.setTimeout(() => {
+          eventSource.close();
+          resolve();
+        }, 15000);
+
+        eventSource.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload?.type === 'result') {
+              const rankingsData = payload?.data;
+              const rankings = Array.isArray(rankingsData?.rankings) ? rankingsData.rankings : [];
+              if (!rankings.length) return;
+              setDailyRankingsDate(rankingsData?.date || null);
+              const sorted = [...rankings].sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0));
+              const top = sorted[0];
+              if (top?.district_name) {
+                setTopRiskDistrict({
+                  district_name: top.district_name,
+                  risk_score: top.risk_score,
+                  risk_status: top.risk_status
+                });
+                setTopRiskCensus({
+                  pct_children: typeof top.pct_children === 'number' ? top.pct_children : undefined,
+                  pct_outdoor_workers: typeof top.pct_outdoor_workers === 'number' ? top.pct_outdoor_workers : undefined,
+                  pct_vulnerable_social: typeof top.pct_vulnerable_social === 'number' ? top.pct_vulnerable_social : undefined
+                });
+              }
+
+              window.clearTimeout(kill);
+              eventSource.close();
+              resolve();
+            }
+            if (payload?.type === 'error') {
+              window.clearTimeout(kill);
+              eventSource.close();
+              resolve();
+            }
+            if (payload?.type === 'complete') {
+              window.clearTimeout(kill);
+              eventSource.close();
+              resolve();
+            }
+          } catch {
+            // ignore
+          }
+        };
+
+        eventSource.onerror = () => {
+          window.clearTimeout(kill);
+          eventSource.close();
+          resolve();
+        };
+      });
+
+      try {
+        localStorage.setItem('heatguard_rankings_fetched_once_v1', '1');
+      } catch {
+        // ignore
+      }
+    } finally {
+      // no-op
+    }
+  };
+
+  // Restore last reasoning/context when navigating away and back.
+  useEffect(() => {
+    try {
+      const lastReasoning = localStorage.getItem(RAG_REASONING_KEY);
+      if (lastReasoning) setReasoning(lastReasoning);
+    } catch {
+      // ignore
+    }
+    try {
+      const raw = localStorage.getItem(RAG_CONTEXT_KEY);
+      if (raw) setContext(JSON.parse(raw));
+    } catch {
+      // ignore
+    }
+
+  // Load cached analysis payload presence (localStorage) and pull top-risk info from DB-cached rankings.
+    try {
+      const raw = localStorage.getItem(LAST_ANALYSIS_KEY);
+      setLastDistrictContext(raw);
+    } catch {
+      setLastDistrictContext(null);
+    }
+
+  // Also derive current top-risk district from today's cached rankings (DB-backed via SSE).
+  fetchRankingsOnce();
+  }, []);
+
+  // Persist reasoning/context updates.
+  useEffect(() => {
+    try {
+      if (reasoning) localStorage.setItem(RAG_REASONING_KEY, reasoning);
+    } catch {
+      // ignore
+    }
+  }, [reasoning]);
+
+  useEffect(() => {
+    try {
+      if (context?.length) localStorage.setItem(RAG_CONTEXT_KEY, JSON.stringify(context));
+    } catch {
+      // ignore
+    }
+  }, [context]);
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -689,33 +851,83 @@ const RagEngineView = () => {
     setMessages(prev => [...prev, newMsg]);
     setInput('');
 
-    try {
-        const response = await fetch('http://localhost:8000/chat', {
+  // Reset panels & enter loading state
+  setIsChatLoading(true);
+  setReasoning('');
+  setContext([]);
+
+  try {
+        let districtContext: string | null = null;
+        try {
+          districtContext = localStorage.getItem(LAST_ANALYSIS_KEY);
+        } catch {
+          districtContext = null;
+        }
+
+        // If we don't have a full analysis payload cached locally, at least send the
+        // daily top-risk district summary (DB-cached rankings) so the bot can answer.
+        if (!districtContext || !districtContext.trim()) {
+          const fallback = buildDistrictContextString();
+          districtContext = fallback ? fallback : null;
+        }
+
+        // Keep these as logs (not UI) for debugging.
+        try {
+          const hasPayload = !!localStorage.getItem(LAST_ANALYSIS_KEY);
+          console.log('[RAG] District payload attached:', hasPayload);
+          console.log('[RAG] Top risk district:', topRiskDistrict);
+          console.log('[RAG] Daily rankings date:', dailyRankingsDate);
+          if (!hasPayload) console.log('[RAG] Using fallback district context string.');
+        } catch {
+          // ignore
+        }
+
+        const response = await fetch('http://localhost:8000/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: userText })
+            body: JSON.stringify({ query: userText, district_context: districtContext })
         });
 
         if (!response.ok) throw new Error("Backend connection failed");
 
         const data = await response.json();
+
+        // Backend now returns { answer, context, reasoning }
         setMessages(prev => [...prev, {
             id: Date.now() + 1,
             role: 'ai',
-            content: data.response
+            content: data.answer || data.response // fallback
         }]);
+
+        if (data.reasoning) setReasoning(data.reasoning);
+        if (data.context) setContext(data.context);
+
     } catch (e) {
          setMessages(prev => [...prev, {
             id: Date.now() + 1,
             role: 'ai',
             content: 'System: Error connecting to RAG backend. Please ensure the server is running.'
           }]);
+  } finally {
+    setIsChatLoading(false);
     }
   };
 
+  const clearHistory = () => {
+      if(window.confirm("Clear chat history?")) {
+          setMessages([]);
+          localStorage.removeItem('chat_history');
+          setReasoning('');
+          setContext([]);
+          localStorage.removeItem(RAG_REASONING_KEY);
+          localStorage.removeItem(RAG_CONTEXT_KEY);
+      }
+  };
+
   return (
-    <div className="h-full flex flex-col xl:flex-row gap-6">
-      <div className="flex-1 bg-card rounded-2xl border-2 border-border shadow-3d flex flex-col overflow-hidden min-h-[500px]">
+    <>
+    <div className="h-full min-h-[650px] flex flex-col xl:flex-row items-stretch gap-6">
+      <div className="flex-1 bg-card rounded-2xl border-2 border-border shadow-3d flex flex-col overflow-hidden">
         <div className="p-4 border-b border-border bg-muted/10 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center text-primary">
@@ -729,9 +941,12 @@ const RagEngineView = () => {
               </div>
             </div>
           </div>
+          <button onClick={clearHistory} className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1">
+              <Trash2 size={12} /> Clear History
+          </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar bg-muted/5">
+  <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar bg-muted/5">
 
           {messages.length === 0 && (
               <div className="h-full flex flex-col items-center justify-center text-muted-foreground opacity-50">
@@ -747,11 +962,22 @@ const RagEngineView = () => {
                   <Sparkles size={16} />
                 </div>
               )}
-              <div className={`max-w-[85%] sm:max-w-[80%] rounded-2xl p-4 text-sm whitespace-pre-line shadow-sm ${msg.role === 'user'
+              <div className={`max-w-[85%] sm:max-w-[80%] rounded-2xl p-4 text-sm shadow-sm ${msg.role === 'user'
                 ? 'bg-primary text-primary-foreground rounded-tr-none font-medium'
-                : 'bg-card border border-border rounded-tl-none font-medium'
+                : 'bg-card border border-border rounded-tl-none font-medium text-foreground'
                 }`}>
-                {msg.content}
+                {/* Use ReactMarkdown */}
+                <ReactMarkdown
+                    components={{
+                        p: ({node, ...props}) => <p className="mb-2 last:mb-0" {...props} />,
+                        ul: ({node, ...props}) => <ul className="list-disc ml-4 mb-2" {...props} />,
+                        ol: ({node, ...props}) => <ol className="list-decimal ml-4 mb-2" {...props} />,
+                        li: ({node, ...props}) => <li className="mb-1" {...props} />,
+                        strong: ({node, ...props}) => <strong className="font-bold text-foreground/90" {...props} />
+                    }}
+                >
+                    {msg.content}
+                </ReactMarkdown>
               </div>
               {msg.role === 'user' && (
                 <div className="w-8 h-8 rounded-full bg-sidebar-border flex-shrink-0 flex items-center justify-center text-sidebar-foreground mt-1">
@@ -760,6 +986,19 @@ const RagEngineView = () => {
               )}
             </div>
           ))}
+
+          {/* Loading bubble */}
+          {isChatLoading && (
+            <div className="flex gap-4 justify-start">
+              <div className="w-8 h-8 rounded-full bg-primary/20 flex-shrink-0 flex items-center justify-center text-primary mt-1">
+                <Sparkles size={16} />
+              </div>
+              <div className="max-w-[85%] sm:max-w-[80%] rounded-2xl p-4 text-sm shadow-sm bg-card border border-border rounded-tl-none font-medium text-foreground flex items-center gap-3">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                <span className="text-muted-foreground">Thinking...</span>
+              </div>
+            </div>
+          )}
           <div ref={chatEndRef} />
         </div>
 
@@ -782,27 +1021,108 @@ const RagEngineView = () => {
         </div>
       </div>
 
-      <div className="w-full xl:w-80 flex flex-col gap-6">
-        <div className="bg-card rounded-2xl border-2 border-border shadow-3d p-4 flex-1">
+      <div className="w-full xl:w-80 flex flex-col gap-6 h-full">
+    <div className="bg-card rounded-2xl border-2 border-border shadow-3d p-4 flex-1 flex flex-col min-h-0 overflow-hidden">
           <h3 className="font-bold text-sm mb-4 flex items-center gap-2 text-muted-foreground uppercase tracking-wider">
             <BrainCircuit size={16} /> Reasoning Process
           </h3>
 
-          <div className="space-y-4 text-center py-10 text-muted-foreground">
-             <p className="text-sm">Waiting for Analysis Data...</p>
+      <div className="text-sm text-foreground/80 flex-1 overflow-y-auto custom-scrollbar min-h-0">
+       {reasoning ? (
+         <div className="space-y-2">
+           {reasoning.split('\n').filter(Boolean).map((line, i) => {
+             const [k, ...rest] = line.split(':');
+             const v = rest.join(':').trim();
+             return (
+               <div key={i} className="flex items-start justify-between gap-3 rounded-lg border border-border bg-muted/5 px-3 py-2">
+                 <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{k}</div>
+                 <div className="text-xs text-foreground/90 text-right font-mono break-words">{v || line}</div>
+               </div>
+             );
+           })}
+         </div>
+       ) : isChatLoading ? (
+         <div className="flex items-center justify-center py-10 text-muted-foreground gap-3">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-sm">Analyzing...</p>
+         </div>
+       ) : (
+         <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+          <p className="text-sm">No reasoning yet.</p>
+          <p className="text-xs text-muted-foreground/70 mt-1">Ask a question to see retrieval + synthesis details.</p>
+         </div>
+       )}
           </div>
         </div>
 
-        <div className="bg-card rounded-2xl border-2 border-border shadow-3d p-4">
+    <div className="bg-card rounded-2xl border-2 border-border shadow-3d p-4 flex-1 flex flex-col min-h-0">
           <h3 className="font-bold text-sm mb-4 flex items-center gap-2 text-muted-foreground uppercase tracking-wider">
             <Database size={16} /> Source Context
           </h3>
-          <div className="space-y-3 pt-4 text-center text-muted-foreground text-sm">
-             No context available.
+      <div className="space-y-3 pt-4 text-sm flex-1 overflow-y-auto custom-scrollbar min-h-0">
+       {context.length > 0 ? (
+         context.map((doc, idx) => (
+           <button
+             key={idx}
+             type="button"
+             onClick={() => setSelectedSource(doc)}
+             className="w-full text-left p-3 bg-muted/10 rounded-lg border border-border hover:bg-muted/20 transition-colors"
+             title="Click to view full source text"
+           >
+             <div className="flex justify-between items-center mb-1">
+               <span className="text-[10px] font-bold text-primary truncate max-w-[150px]">{doc.source}</span>
+               <span className="text-[9px] text-muted-foreground">Score: {doc.similarity_score}</span>
+             </div>
+             <p className="text-xs text-muted-foreground line-clamp-3 italic">"{doc.content}"</p>
+           </button>
+         ))
+       ) : isChatLoading ? (
+         <div className="flex items-center justify-center py-10 text-muted-foreground gap-3">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-sm">Retrieving sources...</p>
+         </div>
+       ) : (
+         <div className="text-center text-muted-foreground">
+          No context available.
+         </div>
+       )}
           </div>
         </div>
       </div>
     </div>
+
+    {/* Source document modal */}
+    {selectedSource && (
+      <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
+        <div
+          className="absolute inset-0 bg-black/60"
+          onClick={() => setSelectedSource(null)}
+        />
+        <div className="relative w-full max-w-3xl bg-card border-2 border-border rounded-2xl shadow-3d p-5 max-h-[80vh] flex flex-col">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-bold text-primary truncate max-w-[60vw]">{selectedSource.source}</div>
+              <div className="text-xs text-muted-foreground">
+                Score: {selectedSource.similarity_score}
+                {selectedSource.page != null ? ` • Page: ${selectedSource.page}` : ''}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedSource(null)}
+              className="p-2 rounded-lg hover:bg-muted/20"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="mt-4 flex-1 overflow-y-auto custom-scrollbar">
+            <pre className="whitespace-pre-wrap text-sm text-foreground/90 font-sans">{selectedSource.content}</pre>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 };
 
@@ -889,7 +1209,7 @@ const DataSourcesView = () => {
   return (
   <div className="h-full flex flex-col gap-6">
     <div className="bg-card p-6 rounded-2xl border-2 border-border shadow-3d flex-shrink-0">
-      <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Database size={24} className="text-secondary" /> Knowledge Base Management</h2>
+  <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Database size={24} className="text-blue-500" /> Knowledge Base Management</h2>
       <p className="text-sm text-muted-foreground/80 mb-6">Manage the documents and datasets used by the RAG engine to generate protocols. Supports PDF (including scanned), Excel, and Image (OCR) uploads.</p>
 
       {/* Searchable/Upload Area */}
@@ -901,8 +1221,8 @@ const DataSourcesView = () => {
         onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
       >
-        <div className={`p-4 rounded-full bg-secondary/10 text-secondary mb-4 transition-transform duration-300 ${isDragging ? 'scale-110' : ''}`}>
-          <UploadCloud size={32} className="text-secondary" />
+        <div className={`p-4 rounded-full bg-primary/10 text-primary mb-4 transition-transform duration-300 ${isDragging ? 'scale-110' : ''}`}>
+          <FileText size={32} className="text-primary" />
         </div>
         <h3 className="font-bold text-lg mb-1">Drag & Drop Files Here</h3>
         <p className="text-sm text-muted-foreground mb-4">or click to browse from your computer</p>
@@ -951,7 +1271,7 @@ const DataSourcesView = () => {
                   <td className="p-4 text-muted-foreground font-mono text-xs">{(item.file.size / 1024 / 1024).toFixed(2)} MB</td>
                   <td className="p-4">
                       <div className="flex flex-col gap-1 w-24">
-                          <div className="flex justify-between text-[10px] font-bold text-primary">
+                          <div className="flex justify-between text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
                              <span>Indexing...</span>
                              <span>{item.progress}%</span>
                           </div>
@@ -1030,23 +1350,493 @@ const DataSourcesView = () => {
 };
 
 // --- Reports View ---
-const ReportsView = () => (
-  <div className="space-y-6">
-    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-      <h2 className="text-xl font-bold flex items-center gap-2"><FileText size={24} className="text-chart-1" /> Generated Reports</h2>
-      <button className="bg-primary text-primary-foreground px-4 py-2 rounded-xl font-bold shadow-3d-sm active:translate-y-[1px] active:shadow-none transition-all flex items-center gap-2 w-full sm:w-auto justify-center">
-        <PlusCircle size={18} /> New Report
-      </button>
-    </div>
+type StoredReport = {
+  id: string;
+  createdAt: string;
+  districtName: string;
+  riskStatus: string;
+  payload: any;
+};
 
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-       <div className="col-span-full p-12 text-center border-2 border-dashed border-border rounded-xl">
-           <div className="text-muted-foreground mb-2">No Reports Generated</div>
-           <p className="text-xs text-muted-foreground/60">Connect to reporting service to view data.</p>
-       </div>
+const REPORTS_STORAGE_KEY = 'heatguard_reports_v1';
+
+const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ analysisResult }) => {
+  const [reports, setReports] = useState<StoredReport[]>(() => {
+    try {
+      const raw = localStorage.getItem(REPORTS_STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as StoredReport[]) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(REPORTS_STORAGE_KEY, JSON.stringify(reports));
+  }, [reports]);
+
+  const createDailyTopRiskReport = async () => {
+    try {
+      const rankingsData: any = await new Promise((resolve, reject) => {
+        const es = new EventSource('http://localhost:8000/api/districts/rankings');
+        const timeout = window.setTimeout(() => {
+          es.close();
+          reject(new Error('Timeout loading rankings'));
+        }, 10000);
+
+        es.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload?.type === 'result') {
+              window.clearTimeout(timeout);
+              es.close();
+              resolve(payload.data);
+            }
+            if (payload?.type === 'error') {
+              window.clearTimeout(timeout);
+              es.close();
+              reject(new Error(payload?.message || 'Rankings error'));
+            }
+            if (payload?.type === 'complete') {
+              // ignore
+            }
+          } catch {
+            // ignore
+          }
+        };
+
+        es.onerror = () => {
+          window.clearTimeout(timeout);
+          es.close();
+          reject(new Error('SSE connection failed'));
+        };
+      });
+
+      const rankings = Array.isArray(rankingsData?.rankings) ? rankingsData.rankings : [];
+      if (!rankings.length) {
+        alert('No cached daily rankings found yet. Please wait for today\'s analysis to complete.');
+        return;
+      }
+
+      const sorted = [...rankings].sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0));
+      const top = sorted[0];
+
+      const reportPayload = {
+        type: 'daily_top_risk_report',
+        date: rankingsData?.date || new Date().toISOString().slice(0, 10),
+        top_risk_district: top,
+        total_districts: rankingsData?.total_districts ?? rankings.length,
+        ranking_snapshot: sorted.slice(0, 25)
+      };
+
+      const report: StoredReport = {
+        id: crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        createdAt: new Date().toISOString(),
+        districtName: top?.district_name || 'TopRisk',
+        riskStatus: top?.risk_status || 'Unknown',
+        payload: reportPayload
+      };
+      setReports(prev => [report, ...prev]);
+    } catch (e) {
+      console.error(e);
+      alert('Could not generate daily report from cached DB rankings.');
+    }
+  };
+
+  const downloadReportPDF = async (report: StoredReport) => {
+    const safeDistrict = String(report.districtName || 'Report').replace(/[^a-z0-9_-]+/gi, '_');
+    const dateStr = report.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+
+    try {
+      // Prefer a real "report" look by rendering a styled HTML report to an image via html2canvas,
+      // then embedding that image into jsPDF with tight margins and clean page slicing.
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 18; // tighter margins, less unwanted space
+      const usableW = pageWidth - margin * 2;
+      const usableH = pageHeight - margin * 2;
+
+      const isDaily = report.payload?.type === 'daily_top_risk_report';
+      const top = isDaily ? report.payload?.top_risk_district : null;
+      const date = isDaily ? report.payload?.date : null;
+      const totalDistricts = isDaily ? (report.payload?.total_districts ?? '—') : '—';
+      const rankings = isDaily
+        ? (Array.isArray(report.payload?.ranking_snapshot)
+          ? report.payload.ranking_snapshot
+          : Array.isArray(report.payload?.rankings)
+            ? report.payload.rankings
+            : [])
+        : [];
+
+      const statusCounts: Record<string, number> = (Array.isArray(rankings) ? rankings : []).reduce(
+        (acc: Record<string, number>, r: any) => {
+          const s = String(r?.risk_status ?? 'Unknown');
+          acc[s] = (acc[s] ?? 0) + 1;
+          return acc;
+        },
+        {} as Record<string, number>
+      );
+
+      const colorForStatus = (s: string) => {
+        const v = String(s || '').toLowerCase();
+        if (v === 'red') return '#EF4444';
+        if (v === 'amber' || v === 'yellow') return '#F59E0B';
+        if (v === 'green') return '#10B981';
+        return '#64748B';
+      };
+
+      const fmtNum = (v: any, digits = 3) => (typeof v === 'number' ? v.toFixed(digits) : '—');
+      const safe = (v: any) => String(v ?? '—');
+
+      // Build an offscreen report DOM.
+      const container = document.createElement('div');
+      container.style.position = 'fixed';
+      container.style.left = '-10000px';
+      container.style.top = '0';
+      container.style.width = '900px';
+      container.style.background = '#ffffff';
+      container.style.color = '#0f172a';
+      container.style.fontFamily = 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
+      container.style.padding = '24px';
+      container.style.border = '1px solid #e5e7eb';
+      container.style.borderRadius = '16px';
+
+      const header = document.createElement('div');
+      header.style.display = 'flex';
+      header.style.justifyContent = 'space-between';
+      header.style.alignItems = 'flex-start';
+      header.style.gap = '16px';
+      header.innerHTML = `
+        <div>
+          <div style="font-size:22px;font-weight:800;letter-spacing:-0.02em;">HeatGuard AI — Daily Risk Report</div>
+          <div style="margin-top:6px;font-size:12px;color:#475569;">Generated: ${safe(new Date(report.createdAt).toLocaleString())}</div>
+          <div style="margin-top:2px;font-size:12px;color:#475569;">Date: ${safe(date || dateStr)}</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:12px;color:#475569;">Top-risk district</div>
+          <div style="font-size:16px;font-weight:800;">${safe(top?.district_name || report.districtName)}</div>
+          <div style="margin-top:6px;display:inline-flex;align-items:center;gap:8px;">
+            <span style="display:inline-block;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:800;background:${colorForStatus(top?.risk_status || report.riskStatus)}1A;color:${colorForStatus(top?.risk_status || report.riskStatus)};border:1px solid ${colorForStatus(top?.risk_status || report.riskStatus)}33;">${safe(top?.risk_status || report.riskStatus)}</span>
+            <span style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace;font-size:11px;color:#334155;">score=${fmtNum(top?.risk_score, 3)}</span>
+          </div>
+        </div>
+      `;
+
+      const cards = document.createElement('div');
+      cards.style.display = 'grid';
+      cards.style.gridTemplateColumns = 'repeat(4, minmax(0, 1fr))';
+      cards.style.gap = '12px';
+      cards.style.marginTop = '18px';
+
+      const makeCard = (title: string, value: string, sub?: string) => {
+        const el = document.createElement('div');
+        el.style.border = '1px solid #e5e7eb';
+        el.style.borderRadius = '14px';
+        el.style.padding = '12px';
+        el.style.background = '#ffffff';
+        el.innerHTML = `
+          <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">${title}</div>
+          <div style="margin-top:6px;font-size:18px;font-weight:900;letter-spacing:-0.02em;">${value}</div>
+          ${sub ? `<div style="margin-top:4px;font-size:11px;color:#475569;">${sub}</div>` : ''}
+        `;
+        return el;
+      };
+
+      cards.appendChild(makeCard('Total districts', safe(totalDistricts), 'from cached DB rankings'));
+      cards.appendChild(makeCard('Temperature (°C)', fmtNum(top?.temperature_c, 2), 'top-risk district'));
+      cards.appendChild(makeCard('Humidity (%)', fmtNum(top?.humidity, 1), 'top-risk district'));
+      cards.appendChild(makeCard('Heat Index (°C)', fmtNum(top?.heat_index_c, 2), 'top-risk district'));
+
+      const chartsWrap = document.createElement('div');
+      chartsWrap.style.display = 'grid';
+      chartsWrap.style.gridTemplateColumns = '360px 1fr';
+      chartsWrap.style.gap = '14px';
+      chartsWrap.style.marginTop = '14px';
+
+      const pieCard = document.createElement('div');
+      pieCard.style.border = '1px solid #e5e7eb';
+      pieCard.style.borderRadius = '14px';
+      pieCard.style.padding = '12px';
+      pieCard.innerHTML = `
+        <div style="font-size:12px;font-weight:900;">Risk Status Distribution</div>
+        <div style="margin-top:10px;display:flex;gap:12px;align-items:center;">
+          <canvas id="hg_pie" width="150" height="150" style="display:block;"></canvas>
+          <div id="hg_legend" style="display:flex;flex-direction:column;gap:6px;"></div>
+        </div>
+      `;
+
+      const insightsCard = document.createElement('div');
+      insightsCard.style.border = '1px solid #e5e7eb';
+      insightsCard.style.borderRadius = '14px';
+      insightsCard.style.padding = '12px';
+      insightsCard.innerHTML = `
+        <div style="font-size:12px;font-weight:900;">Executive Summary</div>
+        <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.5;">
+          This report summarizes district heat-risk rankings from the cached daily analysis. It highlights the top-risk district and provides a full ranking table.
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:#334155;line-height:1.5;">
+          <b>Top risk:</b> ${safe(top?.district_name || report.districtName)} (${safe(top?.risk_status || report.riskStatus)}, score ${fmtNum(top?.risk_score, 3)}).
+        </div>
+      `;
+
+      chartsWrap.appendChild(pieCard);
+      chartsWrap.appendChild(insightsCard);
+
+      const tableCard = document.createElement('div');
+      tableCard.style.marginTop = '14px';
+      tableCard.style.border = '1px solid #e5e7eb';
+      tableCard.style.borderRadius = '14px';
+      tableCard.style.overflow = 'hidden';
+      tableCard.innerHTML = `
+        <div style="padding:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#f8fafc;border-bottom:1px solid #e5e7eb;">
+          <div>
+            <div style="font-size:12px;font-weight:900;">District Risk Rankings</div>
+            <div style="margin-top:2px;font-size:11px;color:#64748b;">Sorted by risk score (descending)</div>
+          </div>
+          <div style="font-size:11px;color:#475569;">Rows: ${Array.isArray(rankings) ? rankings.length : 0}</div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead>
+            <tr style="background:#ffffff;">
+              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">Rank</th>
+              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">District</th>
+              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">Status</th>
+              <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">Score</th>
+            </tr>
+          </thead>
+          <tbody id="hg_rank_rows"></tbody>
+        </table>
+      `;
+
+      container.appendChild(header);
+      container.appendChild(cards);
+      container.appendChild(chartsWrap);
+      container.appendChild(tableCard);
+      document.body.appendChild(container);
+
+      // Fill rankings rows
+      const rowsEl = container.querySelector('#hg_rank_rows') as HTMLElement | null;
+      const sortedRanks = Array.isArray(rankings)
+        ? [...rankings].sort((a: any, b: any) => (b?.risk_score ?? 0) - (a?.risk_score ?? 0))
+        : [];
+      if (rowsEl) {
+        rowsEl.innerHTML = sortedRanks
+          .map((r: any, idx: number) => {
+            const bg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+            const st = safe(r?.risk_status);
+            const c = colorForStatus(st);
+            return `
+              <tr style="background:${bg};">
+                <td style="padding:8px 12px;border-bottom:1px solid #eef2f7;">${idx + 1}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eef2f7;font-weight:700;">${safe(r?.district_name)}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eef2f7;">
+                  <span style="display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid ${c}33;background:${c}1A;color:${c};font-weight:800;font-size:10px;">${st}</span>
+                </td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eef2f7;text-align:right;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace;">${fmtNum(r?.risk_score, 3)}</td>
+              </tr>
+            `;
+          })
+          .join('');
+      }
+
+      // Draw the pie chart
+      const pie = container.querySelector('#hg_pie') as HTMLCanvasElement | null;
+      const legend = container.querySelector('#hg_legend') as HTMLElement | null;
+  const distEntries: Array<[string, number]> = Object.entries(statusCounts).sort((a, b) => b[1] - a[1]);
+  const total = distEntries.reduce((s, [, v]) => s + v, 0);
+
+      if (legend) {
+        legend.innerHTML = distEntries
+          .map(([k, v]) => {
+            const c = colorForStatus(k);
+            const pct = total ? Math.round(((v ?? 0) / total) * 100) : 0;
+            return `
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="width:10px;height:10px;border-radius:3px;background:${c};display:inline-block;"></span>
+                <span style="font-size:11px;color:#334155;"><b>${safe(k)}</b> — ${v} (${pct}%)</span>
+              </div>
+            `;
+          })
+          .join('');
+      }
+
+      if (pie && distEntries.length) {
+        const ctx = pie.getContext('2d');
+        if (ctx) {
+          const cx = pie.width / 2;
+          const cy = pie.height / 2;
+          const r = Math.min(cx, cy) - 4;
+          let start = -Math.PI / 2;
+          distEntries.forEach(([k, v]) => {
+            const frac = total ? (v ?? 0) / total : 0;
+            const end = start + frac * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, r, start, end);
+            ctx.closePath();
+            ctx.fillStyle = colorForStatus(k);
+            ctx.fill();
+            start = end;
+          });
+          // hole for donut look
+          ctx.beginPath();
+          ctx.fillStyle = '#ffffff';
+          ctx.arc(cx, cy, r * 0.55, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Render to canvas.
+      const canvas = await (window as any).html2canvas(container, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const imgW = usableW;
+      const imgH = (canvas.height * imgW) / canvas.width;
+
+      // Slice across PDF pages to avoid awkward whitespace.
+      let remaining = imgH;
+      let yOffset = 0;
+      let pageIndex = 0;
+
+      while (remaining > 0) {
+        if (pageIndex > 0) doc.addPage();
+        const sliceH = Math.min(remaining, usableH);
+
+        // Create a slice canvas for this page.
+        const slice = document.createElement('canvas');
+        slice.width = canvas.width;
+        slice.height = Math.floor((sliceH * canvas.width) / imgW);
+        const sctx = slice.getContext('2d');
+        if (sctx) {
+          sctx.fillStyle = '#ffffff';
+          sctx.fillRect(0, 0, slice.width, slice.height);
+          sctx.drawImage(
+            canvas,
+            0,
+            Math.floor((yOffset * canvas.width) / imgW),
+            canvas.width,
+            slice.height,
+            0,
+            0,
+            slice.width,
+            slice.height
+          );
+        }
+
+        const sliceData = slice.toDataURL('image/png');
+        doc.addImage(sliceData, 'PNG', margin, margin, imgW, sliceH);
+
+        remaining -= sliceH;
+        yOffset += sliceH;
+        pageIndex += 1;
+      }
+
+      document.body.removeChild(container);
+      doc.save(`heatguard-report_${safeDistrict}_${dateStr}.pdf`);
+    } catch (e) {
+      console.error(e);
+      // Fallback to JSON if PDF generation fails for any reason.
+      const blob = new Blob([JSON.stringify(report.payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `heatguard-report_${safeDistrict}_${dateStr}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const deleteReport = (id: string) => {
+    if (!window.confirm('Delete this report?')) return;
+    setReports(prev => prev.filter(r => r.id !== id));
+  };
+
+  const clearAllReports = () => {
+    if (!window.confirm('Clear all reports?')) return;
+    setReports([]);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <h2 className="text-xl font-bold flex items-center gap-2"><FileText size={24} className="text-chart-1" /> Generated Reports</h2>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <button
+            onClick={createDailyTopRiskReport}
+            className="px-4 py-2 rounded-xl font-bold shadow-3d-sm active:translate-y-[1px] active:shadow-none transition-all flex items-center gap-2 w-full sm:w-auto justify-center bg-primary text-primary-foreground hover:opacity-90"
+            title="Generate today's report from cached (DB) district rankings"
+          >
+            <Activity size={18} /> Generate Daily Report (PDF)
+          </button>
+          <button
+            onClick={clearAllReports}
+            className="px-4 py-2 rounded-xl font-bold border-2 border-border bg-card hover:bg-muted/10 transition-colors flex items-center gap-2 w-full sm:w-auto justify-center"
+          >
+            <Trash2 size={18} /> Clear
+          </button>
+        </div>
+      </div>
+
+      {reports.length === 0 ? (
+        <div className="p-12 text-center border-2 border-dashed border-border rounded-xl">
+          <div className="text-muted-foreground mb-2">No Reports Generated</div>
+          <p className="text-xs text-muted-foreground/60">Run a district analysis, then click “New Report”. Reports are saved locally in your browser.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {reports.map((r) => (
+            <div key={r.id} className="bg-card border-2 border-border rounded-2xl shadow-3d p-5 flex flex-col">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-bold">{r.districtName}</div>
+                  <div className="text-xs text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</div>
+                </div>
+                <span className={`text-[10px] px-2 py-1 rounded-full font-bold ${r.riskStatus === 'Red' ? 'bg-red-500/10 text-red-500' : r.riskStatus === 'Amber' ? 'bg-yellow-500/10 text-yellow-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                  {r.riskStatus}
+                </span>
+              </div>
+
+              <div className="mt-4 text-xs text-muted-foreground line-clamp-4">
+                <span className="font-semibold">Summary:</span>{' '}
+                {r.payload?.type === 'daily_top_risk_report'
+                  ? (() => {
+                      const top = r.payload?.top_risk_district;
+                      const date = r.payload?.date;
+                      const status = top?.risk_status ? `${top.risk_status}` : 'Unknown';
+                      const score = typeof top?.risk_score === 'number' ? top.risk_score.toFixed(3) : '—';
+                      return `Daily cached rankings${date ? ` (${date})` : ''}: top risk is ${top?.district_name || r.districtName} (${status}, score=${score}).`;
+                    })()
+                  : (String(r.payload?.prescriptive_advice || '').slice(0, 220) || '—')}
+              </div>
+
+              <div className="mt-5 flex gap-2">
+                <button
+                  onClick={() => downloadReportPDF(r)}
+                  className="flex-1 px-3 py-2 rounded-lg bg-primary text-primary-foreground font-bold text-sm hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+                >
+                  <Download size={16} /> Download PDF
+                </button>
+                <button
+                  onClick={() => deleteReport(r.id)}
+                  className="px-3 py-2 rounded-lg border border-border bg-card hover:bg-destructive/10 hover:text-destructive transition-colors"
+                  title="Delete"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
-  </div>
-);
+  );
+};
 
 // --- Dashboard View (Main) ---
 
@@ -1077,11 +1867,80 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   const [showLogs, setShowLogs] = useState(false); // State for Logs Modal
   const [trendData, setTrendData] = useState<any[]>([]); // New State for Chart Data
 
+  const [rankingsFetchedOnce, setRankingsFetchedOnce] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('heatguard_rankings_fetched_once_v1') === '1';
+    } catch {
+      return false;
+    }
+  });
+
   // Extract batch processing info from logs
   const latestLog = logs.length > 0 ? logs[logs.length - 1] : "";
   const batchInfo = rankingsLoading
       ? (latestLog.includes("Processing batch") ? latestLog.replace(">", "").trim() : "Processing...")
       : "Live Monitoring Active";
+
+  const handleRefetchData = async () => {
+    const already = rankingsFetchedOnce;
+    const msg = already
+      ? 'This will refetch district rankings again. It may take some time because there are many districts. You already fetched this data once in this browser. Continue?'
+      : 'This will fetch district rankings. It may take some time because there are many districts. Continue?';
+    if (!window.confirm(msg)) return;
+
+    try {
+      console.log('[Dashboard] Refetch requested.');
+      await new Promise<void>((resolve, reject) => {
+        const es = new EventSource(`http://localhost:8000/api/districts/rankings?force=1&_ts=${Date.now()}`);
+        const timeout = window.setTimeout(() => {
+          es.close();
+          reject(new Error('Timeout refetching rankings'));
+        }, 20000);
+
+        es.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload?.type === 'log') console.log('[Rankings SSE]', payload.message);
+            if (payload?.type === 'error') {
+              console.warn('[Rankings SSE] error', payload.message);
+              window.clearTimeout(timeout);
+              es.close();
+              reject(new Error(payload?.message || 'Rankings error'));
+            }
+            if (payload?.type === 'result') {
+              console.log('[Rankings SSE] result received');
+              window.clearTimeout(timeout);
+              es.close();
+              resolve();
+            }
+            if (payload?.type === 'complete') {
+              window.clearTimeout(timeout);
+              es.close();
+              resolve();
+            }
+          } catch {
+            // ignore
+          }
+        };
+
+        es.onerror = (err) => {
+          window.clearTimeout(timeout);
+          es.close();
+          reject(err);
+        };
+      });
+
+      setRankingsFetchedOnce(true);
+      try {
+        localStorage.setItem('heatguard_rankings_fetched_once_v1', '1');
+      } catch {
+        // ignore
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Failed to refetch rankings. Please ensure the backend is running.');
+    }
+  };
 
   // Fetch trend data when rankings update
   useEffect(() => {
@@ -1151,6 +2010,14 @@ const DashboardView: React.FC<DashboardViewProps> = ({
              </div>
 
              <div className="flex gap-2">
+        <button
+          onClick={handleRefetchData}
+          className="text-sm font-bold bg-muted/10 hover:bg-muted/20 text-foreground px-3 py-2 rounded-lg border border-border transition-colors flex items-center gap-2"
+          title={rankingsFetchedOnce ? 'Refetch rankings (already fetched once in this browser)' : 'Fetch rankings'}
+        >
+          <Activity size={16} />
+          Refetch Data
+        </button>
                 <button
                     onClick={() => setShowLogs(true)}
                     className="text-sm font-bold bg-muted/10 hover:bg-muted/20 text-foreground px-3 py-2 rounded-lg border border-border transition-colors flex items-center gap-2"
@@ -1383,6 +2250,16 @@ const Dashboard: React.FC<DashboardProps> = ({ rankings, rankingsLoading, logs }
   });
   const [analysisResult, setAnalysisResult] = useState<AnalysisResponse | null>(null);
 
+  // Restore last analysis result so reports/chat can keep working after route/view navigation.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('heatguard_last_analysis_v1');
+      if (raw) setAnalysisResult(JSON.parse(raw));
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const handleSimulationChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
     setSimulationData(prev => ({
@@ -1400,6 +2277,11 @@ const Dashboard: React.FC<DashboardProps> = ({ rankings, rankingsLoading, logs }
       // 2. Run Analysis
       const result = await HeatGuardAPI.analyzeDistrict(simulationData);
       setAnalysisResult(result);
+      try {
+        localStorage.setItem('heatguard_last_analysis_v1', JSON.stringify(result));
+      } catch {
+        // ignore
+      }
     } catch (err) {
       console.error("Analysis Failed:", err);
       alert("Failed to run analysis. Ensure backend is running.");
@@ -1604,9 +2486,9 @@ const Dashboard: React.FC<DashboardProps> = ({ rankings, rankingsLoading, logs }
         )}
         {currentView === 'map' && <div className="flex-1 w-full h-full relative"><IndiaMapUI rankings={rankings} /></div>}
         {currentView === 'rag' && <RagEngineView />}
-        {currentView === 'datasources' && <DataSourcesView />}
-        {currentView === 'reports' && <ReportsView />}
-        {currentView === 'rankings' && <RankingsView rankings={rankings} />}
+  {currentView === 'datasources' && <DataSourcesView />}
+  {currentView === 'reports' && <ReportsView analysisResult={analysisResult} />}
+        {currentView === 'rankings' && <RankingsView rankings={rankings} loading={rankingsLoading} />}
       </main>
 
     </div>
