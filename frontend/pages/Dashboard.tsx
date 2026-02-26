@@ -49,7 +49,7 @@ import {
   Tooltip,
   ResponsiveContainer
 } from 'recharts';
-import { HeatGuardAPI, DistrictData, AnalysisResponse, DistrictRanking, RankingsResponse, UploadedFile } from '../api';
+import { HeatGuardAPI, DistrictData, AnalysisResponse, DistrictRanking, RankingsResponse, UploadedFile, MortalityRiskItem } from '../api';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '../ui';
 import { useNavigate } from 'react-router-dom';
 import { LogConsole } from '../components/LogConsole';
@@ -1006,12 +1006,25 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                </div>
 
                <div className="space-y-3">
-                   <div className="bg-slate-800/50 p-3 rounded-lg flex justify-between items-center">
-                       <span className="text-sm text-slate-300">Heat hospitalization risk</span>
-                       <span className={`text-xl font-bold ${selectedDistrict.risk_score > 0.75 ? 'text-red-400' : 'text-emerald-400'}`}>
-                           {(selectedDistrict.risk_score * 100).toFixed(0)}%
-                       </span>
-                   </div>
+                    <div className="bg-slate-800/50 p-3 rounded-lg flex justify-between items-center">
+                        <span className="text-sm text-slate-300">Heat hospitalization risk</span>
+                        <span className={`text-xl font-bold ${selectedDistrict.risk_score > 0.75 ? 'text-red-400' : 'text-emerald-400'}`}>
+                            {(selectedDistrict.risk_score * 100).toFixed(0)}%
+                        </span>
+                    </div>
+                    <div className="bg-slate-800/50 p-3 rounded-lg">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-slate-300">Mortality risk</span>
+                          <span className="text-xl font-bold text-amber-300">
+                              {typeof selectedDistrict.mortality_risk_score === 'number'
+                                ? `${(selectedDistrict.mortality_risk_score * 100).toFixed(0)}%`
+                                : '—'}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1">
+                          {selectedDistrict.mortality_risk_reason || 'Disease indicators drive this uplift.'}
+                        </div>
+                    </div>
 
                    <div className="grid grid-cols-2 gap-2">
                        <div className="bg-slate-800/50 p-2 rounded-lg text-center">
@@ -2328,7 +2341,13 @@ const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   const navigate = useNavigate();
   const [showLogs, setShowLogs] = useState(false); // State for Logs Modal
+  const [mortalityRiskItems, setMortalityRiskItems] = useState<MortalityRiskItem[]>([]);
+  const [mortalityLoading, setMortalityLoading] = useState(false);
+  const [mortalityError, setMortalityError] = useState<string | null>(null);
+  const [mortalityUpdatedAt, setMortalityUpdatedAt] = useState<string | null>(null);
   const [trendData, setTrendData] = useState<any[]>([]); // New State for Chart Data
+
+  const mortalityTopItems = mortalityRiskItems.slice(0, 6);
 
   const [refetchModalOpen, setRefetchModalOpen] = useState(false);
   const [refetchModalMessage, setRefetchModalMessage] = useState<string>('');
@@ -2347,6 +2366,27 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   const batchInfo = rankingsLoading
       ? (latestLog.includes("Processing batch") ? latestLog.replace(">", "").trim() : "Processing...")
       : "Live Monitoring Active";
+
+  const fetchMortalityRisk = async () => {
+    setMortalityLoading(true);
+    setMortalityError(null);
+    try {
+      const res = await HeatGuardAPI.getMortalityRisk();
+      const items = Array.isArray(res?.items) ? res.items : [];
+      setMortalityRiskItems(items);
+      setMortalityUpdatedAt(res?.as_of_date || null);
+    } catch (e: any) {
+      setMortalityRiskItems([]);
+      setMortalityUpdatedAt(null);
+      setMortalityError(e?.message || 'Failed to load mortality risk');
+    } finally {
+      setMortalityLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMortalityRisk();
+  }, []);
 
   const handleRefetchData = async () => {
     const already = rankingsFetchedOnce;
@@ -2422,19 +2462,22 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     const fetchTrend = async () => {
          const targetDistrict = rankings.length > 0 ? rankings[0].district_name : "Adilabad";
          try {
-             // Retrieve real historical data from backend
-             // Ask for enough history to reliably build the last-7-calendar-days window.
-             const history = await HeatGuardAPI.getDistrictHistory(targetDistrict, 60);
+             const roundTemp = (value: number | null | undefined) =>
+               typeof value === 'number' && Number.isFinite(value) ? Math.round(value * 10) / 10 : value;
 
-             // Format for chart
-             const chartDataRaw = (Array.isArray(history) ? history : [])
-               .filter((h: any) => h?.date)
-               .map((h: any) => ({
-                 date: h.date,
-                 max_temp: typeof h.max_temp === 'number' ? h.max_temp : Number(h.max_temp),
-                 shortDate: new Date(h.date || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-               }))
-               .filter((d: any) => d?.date && Number.isFinite(d?.max_temp));
+              // Retrieve real historical data from backend
+              // Ask for enough history to reliably build the last-7-calendar-days window.
+              const history = await HeatGuardAPI.getDistrictHistory(targetDistrict, 60);
+
+              // Format for chart
+              const chartDataRaw = (Array.isArray(history) ? history : [])
+                .filter((h: any) => h?.date)
+                .map((h: any) => ({
+                  date: h.date,
+                  max_temp: roundTemp(typeof h.max_temp === 'number' ? h.max_temp : Number(h.max_temp)),
+                  shortDate: new Date(h.date || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                }))
+                .filter((d: any) => d?.date && Number.isFinite(d?.max_temp));
 
              // Sort by date ascending
              chartDataRaw.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -2468,18 +2511,19 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                const row = byDay.get(key);
 
                // Carry-forward last known value so all 7 days plot.
-               const prev = days.length > 0 ? days[days.length - 1] : null;
-               const carried = typeof prev?.max_temp === 'number' && Number.isFinite(prev.max_temp) ? prev.max_temp : null;
-               const firstKnown = chartDataRaw.find((x: any) => typeof x?.max_temp === 'number' && Number.isFinite(x.max_temp))?.max_temp ?? null;
-               const fallback = carried ?? firstKnown;
-               const value = typeof row?.max_temp === 'number' && Number.isFinite(row.max_temp) ? row.max_temp : fallback;
+                const prev = days.length > 0 ? days[days.length - 1] : null;
+                const carried = typeof prev?.max_temp === 'number' && Number.isFinite(prev.max_temp) ? prev.max_temp : null;
+                const firstKnown = chartDataRaw.find((x: any) => typeof x?.max_temp === 'number' && Number.isFinite(x.max_temp))?.max_temp ?? null;
+                const fallback = carried ?? firstKnown;
+                const value = typeof row?.max_temp === 'number' && Number.isFinite(row.max_temp) ? row.max_temp : fallback;
+                const roundedValue = roundTemp(value);
 
-               days.push({
-                 date: key,
-                 shortDate: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                 max_temp: value
-               });
-             }
+                days.push({
+                  date: key,
+                  shortDate: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                  max_temp: roundedValue
+                });
+              }
 
              // If we still don't have any numeric data, show empty rather than a flat zero/NaN line.
              if (!days.some((x) => typeof x?.max_temp === 'number' && Number.isFinite(x.max_temp))) {
@@ -2616,7 +2660,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                         </div>
 
                         <div className="min-w-0">
-                             <h4 className="font-bold text-lg text-foreground truncate">{district.district_name} District</h4>
+                              <h4 className="font-bold text-lg text-foreground truncate">
+                                {district.district_name} District
+                              </h4>
+                              {district.state && (
+                                <div className="text-[11px] text-muted-foreground">{district.state}</div>
+                              )}
 
                              {/* Use compact tags instead of verbose text */}
                              <div className="flex flex-wrap items-center gap-2 mt-1 mb-2">
@@ -2684,6 +2733,84 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         isIncreaseBad={false}
         icon={<Activity size={24} />}
       />
+    </div>
+
+    {/* Mortality Risk Section */}
+    <div className="bg-card rounded-2xl border-2 border-border shadow-3d p-6 mb-8">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+        <div>
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <AlertTriangle className="text-primary" size={20} />
+            Mortality Risk
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Heat hospitalization risk adjusted by district disease prevalence indicators.
+          </p>
+        </div>
+        <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => onViewChange('rankings')}
+            className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
+          >
+            View Full Rankings <ArrowUpRight size={12} />
+          </button>
+          <div className="text-xs text-muted-foreground">
+            {mortalityUpdatedAt ? `As of ${mortalityUpdatedAt}` : 'No mortality update date'}
+          </div>
+        </div>
+      </div>
+
+      {mortalityLoading ? (
+        <div className="flex items-center justify-center py-8 text-muted-foreground gap-3">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          Loading mortality risk...
+        </div>
+      ) : mortalityError ? (
+        <div className="text-sm text-destructive">{mortalityError}</div>
+      ) : mortalityTopItems.length === 0 ? (
+        <div className="text-sm text-muted-foreground">No mortality risk data available yet.</div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+          {mortalityTopItems.map((item) => {
+            const state = rankings.find(r => r.district_name === item.district_name)?.state;
+            return (
+            <div
+              key={item.district_name}
+              className="bg-muted/10 rounded-xl border border-border/60 p-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-bold text-foreground">{item.district_name}</div>
+                  {state && (
+                    <div className="text-[11px] text-muted-foreground">{state}</div>
+                  )}
+                  <div className="text-[11px] text-amber-300 font-semibold">
+                    Heat risk: {(item.heat_risk_score * 100).toFixed(1)}%
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-muted-foreground uppercase">Mortality Risk</div>
+                  <div className="text-lg font-bold text-primary">
+                    {(item.mortality_risk_score * 100).toFixed(1)}%
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 text-[11px] text-muted-foreground">
+                {item.mortality_risk_reason ? (
+                  <>
+                    <span className="underline">Risk factors:</span>{' '}
+                    {item.mortality_risk_reason.replace(/^Risk factors:\s*/i, '')}
+                  </>
+                ) : (
+                  'Disease indicators drive the uplift in mortality risk.'
+                )}
+              </div>
+            </div>
+          )})}
+        </div>
+      )}
     </div>
 
     {/* Chart Section - Hiding if no data */}
@@ -3030,3 +3157,14 @@ const Dashboard: React.FC<DashboardProps> = ({ rankings, rankingsLoading, logs }
 };
 
 export default Dashboard;
+
+
+
+
+
+
+
+
+
+
+

@@ -44,7 +44,7 @@ export const RankingsView: React.FC<{ rankings: DistrictRanking[]; loading: bool
                       <tr>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Rank</th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">District</th>
-                        <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Heat hospitalization risk</th>
+                        <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Heat + Mortality Risk</th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Population Demographics</th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">LST <span className="text-[10px] lowercase">(°C)</span></th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Air Temp <span className="text-[10px] lowercase">(°C)</span></th>
@@ -68,8 +68,12 @@ export const RankingsView: React.FC<{ rankings: DistrictRanking[]; loading: bool
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
                                   <div className="font-medium text-lg text-foreground">{district.district_name}</div>
+                                  {district.state && (
+                                    <div className="text-[11px] text-muted-foreground">{district.state}</div>
+                                  )}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
+                                  <div className="text-xs font-semibold text-muted-foreground uppercase">Heat hospitalization Risk</div>
                                   <div className="text-lg font-bold text-foreground">
                                     {(district.risk_score * 100).toFixed(1)}%
                                   </div>
@@ -78,6 +82,23 @@ export const RankingsView: React.FC<{ rankings: DistrictRanking[]; loading: bool
                                       className={`h-full rounded-full ${district.risk_score > 0.8 ? 'bg-red-500' : (district.risk_score > 0.5 ? 'bg-orange-400' : 'bg-green-500')}`}
                                       style={{ width: `${district.risk_score * 100}%` }}
                                     ></div>
+                                  </div>
+                                  <div className="mt-3 text-xs font-semibold text-muted-foreground uppercase">Mortality risk</div>
+                                  <div className="text-base font-bold text-foreground">
+                                    {typeof district.mortality_risk_score === 'number'
+                                      ? `${(district.mortality_risk_score * 100).toFixed(1)}%`
+                                      : '—'}
+                                  </div>
+                                  {typeof district.mortality_risk_score === 'number' && (
+                                    <div className="h-1.5 w-24 bg-muted/50 rounded-full overflow-hidden mt-1">
+                                      <div
+                                        className={`h-full rounded-full ${district.mortality_risk_score > 0.8 ? 'bg-red-500' : (district.mortality_risk_score > 0.5 ? 'bg-orange-400' : 'bg-green-500')}`}
+                                        style={{ width: `${district.mortality_risk_score * 100}%` }}
+                                      ></div>
+                                    </div>
+                                  )}
+                                  <div className="text-[11px] text-muted-foreground mt-1 max-w-[180px] whitespace-normal">
+                                    {district.mortality_risk_reason || 'Disease indicators drive the uplift.'}
                                   </div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">

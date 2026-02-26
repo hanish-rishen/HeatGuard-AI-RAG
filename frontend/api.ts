@@ -46,6 +46,7 @@ export interface HealthCheckResponse {
 
 export interface DistrictRanking {
     district_name: string;
+    state?: string | null;
     lat: number;
     lon: number;
     risk_score: number;
@@ -57,7 +58,26 @@ export interface DistrictRanking {
     pct_children: number;
     pct_outdoor_workers: number;
     pct_vulnerable_social: number;
+    mortality_risk_score?: number | null;
+    mortality_risk_reason?: string | null;
+    mortality_disease_index?: number | null;
     date?: string; // Added optional date for historical data
+}
+
+
+export interface MortalityRiskItem {
+    district_name: string;
+    heat_risk_score: number;
+    heat_risk_date?: string | null;
+    mortality_risk_score: number;
+    mortality_disease_index: number;
+    mortality_risk_reason?: string | null;
+}
+
+export interface MortalityRiskResponse {
+    total_districts: number;
+    as_of_date?: string | null;
+    items: MortalityRiskItem[];
 }
 
 export interface RankingsResponse {
@@ -125,6 +145,12 @@ export const HeatGuardAPI = {
         return response.data;
     },
 
+    
+    getMortalityRisk: async (): Promise<MortalityRiskResponse> => {
+        const response = await api.get<MortalityRiskResponse>('/mortality-risk');
+        return response.data;
+    },
+
     getFiles: async (): Promise<UploadedFile[]> => {
         const response = await api.get<UploadedFile[]>('/files');
         return response.data;
@@ -151,3 +177,5 @@ export const HeatGuardAPI = {
         await api.delete(`/files/${encodeURIComponent(filename)}`);
     },
 };
+
+
