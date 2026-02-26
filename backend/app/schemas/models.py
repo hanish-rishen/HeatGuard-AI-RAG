@@ -38,12 +38,12 @@ class DistrictData(BaseModel):
     max_temp: float = Field(
         ...,
         ge=-50, le=60,
-        description="Maximum air temperature at 2 meters (┬░C)"
+        description="Maximum air temperature at 2 meters (°C)"
     )
     lst: float = Field(
         ...,
         ge=-50, le=80,
-        description="Land Surface Temperature / Earth Skin Temperature (┬░C)"
+        description="Land Surface Temperature / Earth Skin Temperature (°C)"
     )
     humidity: float = Field(
         ...,
@@ -137,11 +137,11 @@ class AnalysisResponse(BaseModel):
     )
     heat_index: float = Field(
         ...,
-        description="Calculated Heat Index using Rothfusz Regression (┬░C)"
+        description="Calculated Heat Index using Rothfusz Regression (°C)"
     )
     lst: float = Field(
         ...,
-        description="Land Surface Temperature (┬░C)"
+        description="Land Surface Temperature (°C)"
     )
 
     # ------------------------------------
@@ -174,6 +174,27 @@ class AnalysisResponse(BaseModel):
     district_name: str = Field(..., description="Name of the analyzed district")
     analysis_date: str = Field(..., description="Date of analysis")
     model_version: str = Field("v1.0", description="Model version used")
+
+
+class MortalityRiskItem(BaseModel):
+    """
+    PURPOSE: Mortality risk per district using NFHS disease indicators.
+    """
+    district_name: str
+    heat_risk_score: float
+    heat_risk_date: str | None = None
+    mortality_risk_score: float
+    mortality_disease_index: float
+    mortality_risk_reason: str | None = None
+
+
+class MortalityRiskResponse(BaseModel):
+    """
+    PURPOSE: Response for mortality risk analytics endpoint.
+    """
+    total_districts: int
+    as_of_date: str | None = None
+    items: list[MortalityRiskItem]
 
 
 class HealthCheckResponse(BaseModel):
@@ -210,3 +231,6 @@ class ChatRequest(BaseModel):
         None,
         description="Optional district analysis context to ground the chat answer"
     )
+
+
+

@@ -32,6 +32,8 @@ except Exception as e:
     logger.warning(f"Error initializing PDF tools: {e}")
 
 from app.schemas.models import (
+    MortalityRiskResponse,
+    MortalityRiskItem,
     AnalysisRequest,
     AnalysisResponse,
     HealthCheckResponse,
@@ -44,6 +46,7 @@ from app.services.predictive_engine import predictive_engine
 from app.services.prescriptive_engine import prescriptive_engine
 from app.services.data_fetcher import data_fetcher
 from app.services.db_manager import db_manager
+from app.services.nfhs_service import nfhs_service
 from app.core.config import get_settings
 
 router = APIRouter()
@@ -385,7 +388,7 @@ async def seed_knowledge_base():
             "meta": {"source": "National_HAP_2024.pdf", "page": 12}
         },
         {
-            "content": "Workplace Safety Guidelines: Outdoor manual labor is prohibited between 12:00 PM and 3:00 PM when Heat Index exceeds 42┬░C. Employers must provide ORS solution.",
+            "content": "Workplace Safety Guidelines: Outdoor manual labor is prohibited between 12:00 PM and 3:00 PM when Heat Index exceeds 42°C. Employers must provide ORS solution.",
             "meta": {"source": "Labor_Ministry_Advisory.pdf", "page": 5}
         },
         {
@@ -423,6 +426,10 @@ async def get_district_rankings():
             if existing_results and len(existing_results) >= len(all_districts) * 0.95:
                 logger.info(f"Found {len(existing_results)} cached results for {today_str}")
                 yield f"data: {json.dumps({'type': 'log', 'message': 'Retrieved cached analysis for today.'})}\n\n"
+
+                nfhs_service.attach_mortality_risk(existing_results)
+
+                existing_results.sort(key=lambda x: x["risk_score"], reverse=True)
 
                 final_response = {
                     "date": today_str,
@@ -529,6 +536,9 @@ async def get_district_rankings():
                     # yield f"data: {json.dumps({'type': 'log', 'message': f'Error analyzing {district_name}: {str(e)}'})}\n\n"
                     continue
 
+            # Attach mortality risk based on NFHS disease indicators.
+            nfhs_service.attach_mortality_risk(results)
+
             # Sort by risk score (descending)
             results.sort(key=lambda x: x["risk_score"], reverse=True)
 
@@ -550,6 +560,46 @@ async def get_district_rankings():
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.get("/mortality-risk", response_model=MortalityRiskResponse)
+async def get_mortality_risk():
+    """
+    PURPOSE: Combine HeatGuard heat risk with NFHS disease indicators for mortality risk.
+    """
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT d1.district_name, d1.risk_score, d1.date FROM daily_analysis d1 INNER JOIN (SELECT district_name, MAX(date) AS max_date FROM daily_analysis GROUP BY district_name) d2 ON d1.district_name = d2.district_name AND d1.date = d2.max_date")
+        rows = cursor.fetchall()
+        conn.close()
+
+        latest_date = None
+        items = []
+        for district_name, risk_score, date_str in rows:
+            if date_str and (latest_date is None or date_str > latest_date):
+                latest_date = date_str
+            mortality = nfhs_service.get_mortality_risk(str(district_name), risk_score)
+            if not mortality:
+                continue
+            items.append(MortalityRiskItem(
+                district_name=str(district_name),
+                heat_risk_score=float(risk_score),
+                heat_risk_date=date_str,
+                mortality_risk_score=mortality["mortality_risk_score"],
+                mortality_disease_index=mortality["mortality_disease_index"],
+                mortality_risk_reason=mortality.get("mortality_risk_reason")
+            ))
+
+        items.sort(key=lambda x: x.mortality_risk_score, reverse=True)
+        return MortalityRiskResponse(
+            total_districts=len(items),
+            as_of_date=latest_date,
+            items=items
+        )
+    except Exception as e:
+        logger.error(f"Failed to compute mortality risk: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/districts/{district_name}/history", response_model=list[dict])
 async def get_district_history(district_name: str, limit: int = 30):
@@ -602,4 +652,8 @@ async def get_district_history(district_name: str, limit: int = 30):
     except Exception as e:
         logger.error(f"Error fetching district history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
 
