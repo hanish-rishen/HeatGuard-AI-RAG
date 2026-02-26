@@ -1935,15 +1935,68 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
             ? report.payload.rankings
             : [])
         : [];
+      const topWithReason = top && rankings.length
+        ? rankings.find((r: any) => String(r?.district_name || '').toLowerCase() === String(top?.district_name || '').toLowerCase()) || top
+        : top;
 
       const statusCounts: Record<string, number> = (Array.isArray(rankings) ? rankings : []).reduce(
         (acc: Record<string, number>, r: any) => {
-          const s = String(r?.risk_status ?? 'Unknown');
-          acc[s] = (acc[s] ?? 0) + 1;
+          const raw = String(r?.risk_status ?? 'Unknown').trim();
+          const key = raw ? raw.toLowerCase() : 'unknown';
+          acc[key] = (acc[key] ?? 0) + 1;
           return acc;
         },
         {} as Record<string, number>
       );
+      const riskScores = Array.isArray(rankings)
+        ? rankings.map((r: any) => (typeof r?.risk_score === 'number' ? r.risk_score : null)).filter((v: any) => typeof v === 'number')
+        : [];
+      const diseaseScores = Array.isArray(rankings)
+        ? rankings.map((r: any) => (typeof r?.mortality_risk_score === 'number' ? r.mortality_risk_score : null)).filter((v: any) => typeof v === 'number')
+        : [];
+      const avgRisk = riskScores.length ? riskScores.reduce((a: number, b: number) => a + b, 0) / riskScores.length : null;
+      const avgDisease = diseaseScores.length ? diseaseScores.reduce((a: number, b: number) => a + b, 0) / diseaseScores.length : null;
+      const highRiskCount = Array.isArray(rankings)
+        ? rankings.filter((r: any) => String(r?.risk_status || '').toLowerCase() === 'red').length
+        : 0;
+      const medRiskCount = Array.isArray(rankings)
+        ? rankings.filter((r: any) => {
+          const v = String(r?.risk_status || '').toLowerCase();
+          return v === 'amber' || v === 'yellow';
+        }).length
+        : 0;
+      const lowRiskCount = Array.isArray(rankings)
+        ? rankings.filter((r: any) => String(r?.risk_status || '').toLowerCase() === 'green').length
+        : 0;
+      const diseaseAvailable = Array.isArray(rankings)
+        ? rankings.filter((r: any) => typeof r?.mortality_risk_score === 'number').length
+        : 0;
+      const topDisease = Array.isArray(rankings)
+        ? [...rankings]
+          .filter((r: any) => typeof r?.mortality_risk_score === 'number')
+          .sort((a: any, b: any) => (b?.mortality_risk_score ?? 0) - (a?.mortality_risk_score ?? 0))[0] || null
+        : null;
+      const topHeatList = Array.isArray(rankings)
+        ? [...rankings].sort((a: any, b: any) => (b?.risk_score ?? 0) - (a?.risk_score ?? 0)).slice(0, 10)
+        : [];
+      const topDiseaseList = Array.isArray(rankings)
+        ? [...rankings]
+          .filter((r: any) => typeof r?.mortality_risk_score === 'number')
+          .sort((a: any, b: any) => (b?.mortality_risk_score ?? 0) - (a?.mortality_risk_score ?? 0))
+          .slice(0, 10)
+        : [];
+      const bottomRisk = Array.isArray(rankings)
+        ? [...rankings].sort((a: any, b: any) => (a?.risk_score ?? 0) - (b?.risk_score ?? 0))[0] || null
+        : null;
+      const topVulnerable = Array.isArray(rankings)
+        ? [...rankings].sort((a: any, b: any) => (b?.pct_vulnerable_social ?? 0) - (a?.pct_vulnerable_social ?? 0))[0] || null
+        : null;
+      const topOutdoor = Array.isArray(rankings)
+        ? [...rankings].sort((a: any, b: any) => (b?.pct_outdoor_workers ?? 0) - (a?.pct_outdoor_workers ?? 0))[0] || null
+        : null;
+      const topChildren = Array.isArray(rankings)
+        ? [...rankings].sort((a: any, b: any) => (b?.pct_children ?? 0) - (a?.pct_children ?? 0))[0] || null
+        : null;
 
       const colorForStatus = (s: string) => {
         const v = String(s || '').toLowerCase();
@@ -1952,8 +2005,26 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
         if (v === 'green') return '#10B981';
         return '#64748B';
       };
+      const displayStatus = (s: any) => {
+        const v = String(s ?? '').trim().toLowerCase();
+        if (!v) return 'Unknown';
+        if (v === 'red') return 'Red';
+        if (v === 'amber' || v === 'yellow') return 'Amber';
+        if (v === 'green') return 'Green';
+        if (v === 'unknown') return 'Unknown';
+        return v.charAt(0).toUpperCase() + v.slice(1);
+      };
+      const labelForStatus = (s: any) => {
+        const v = String(s ?? '').trim().toLowerCase();
+        if (v === 'red') return 'High risk';
+        if (v === 'amber' || v === 'yellow') return 'Moderate risk';
+        if (v === 'green') return 'Low risk';
+        if (!v || v === 'unknown') return 'Unknown';
+        return v.charAt(0).toUpperCase() + v.slice(1);
+      };
 
       const fmtNum = (v: any, digits = 3) => (typeof v === 'number' ? v.toFixed(digits) : '—');
+      const fmtPct = (v: any, digits = 1) => (typeof v === 'number' ? `${(v * 100).toFixed(digits)}%` : '—');
       const safe = (v: any) => String(v ?? '—');
 
       // Build an offscreen report DOM.
@@ -1980,7 +2051,7 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
       header.style.gap = '16px';
       header.innerHTML = `
         <div>
-          <div style="font-size:22px;font-weight:800;letter-spacing:-0.02em;">HeatGuard AI — Daily Risk Report</div>
+          <div style="font-size:22px;font-weight:800;letter-spacing:-0.02em;">HeatGuard AI — Daily Heat Risk Report</div>
           <div style="margin-top:6px;font-size:12px;color:#475569;">Generated: ${safe(new Date(report.createdAt).toLocaleString())}</div>
           <div style="margin-top:2px;font-size:12px;color:#475569;">Date: ${safe(date || dateStr)}</div>
         </div>
@@ -1988,8 +2059,9 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
           <div style="font-size:12px;color:#475569;">Top-risk district</div>
           <div style="font-size:16px;font-weight:800;">${safe(top?.district_name || report.districtName)}</div>
           <div style="margin-top:6px;display:inline-flex;align-items:center;gap:8px;">
-            <span style="display:inline-block;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:800;background:${colorForStatus(top?.risk_status || report.riskStatus)}1A;color:${colorForStatus(top?.risk_status || report.riskStatus)};border:1px solid ${colorForStatus(top?.risk_status || report.riskStatus)}33;">${safe(top?.risk_status || report.riskStatus)}</span>
-            <span style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace;font-size:11px;color:#334155;">score=${fmtNum(top?.risk_score, 3)}</span>
+            <span style="width:10px;height:10px;border-radius:999px;background:${colorForStatus(top?.risk_status || report.riskStatus)};display:inline-block;"></span>
+            <span style="font-size:11px;color:#334155;">${labelForStatus(top?.risk_status || report.riskStatus)}</span>
+            <span style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace;font-size:11px;color:#334155;">heat risk=${fmtPct(top?.risk_score, 1)}</span>
           </div>
         </div>
       `;
@@ -2014,14 +2086,18 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
         return el;
       };
 
-      cards.appendChild(makeCard('Total districts', safe(totalDistricts), 'from cached DB rankings'));
-      cards.appendChild(makeCard('Temperature (°C)', fmtNum(top?.temperature_c, 2), 'top-risk district'));
-      cards.appendChild(makeCard('Humidity (%)', fmtNum(top?.humidity, 1), 'top-risk district'));
-      cards.appendChild(makeCard('Heat Index (°C)', fmtNum(top?.heat_index_c, 2), 'top-risk district'));
+      cards.appendChild(makeCard('Total districts', safe(totalDistricts), 'analyzed today'));
+      cards.appendChild(makeCard('High risk', safe(highRiskCount), 'heat status'));
+      cards.appendChild(makeCard('Moderate risk', safe(medRiskCount), 'heat status'));
+      cards.appendChild(makeCard('Avg heat risk', fmtPct(avgRisk, 1), 'across districts'));
+      cards.appendChild(makeCard('Avg disease-amplified heat risk', fmtPct(avgDisease, 1), 'across districts'));
+      cards.appendChild(makeCard('Low risk', safe(lowRiskCount), 'heat status'));
+      cards.appendChild(makeCard('Top heat risk district', safe(top?.district_name || report.districtName), 'rank #1'));
+      cards.appendChild(makeCard('Top disease-amplified district', safe(topDisease?.district_name || '—'), fmtPct(topDisease?.mortality_risk_score, 1)));
 
       const chartsWrap = document.createElement('div');
       chartsWrap.style.display = 'grid';
-      chartsWrap.style.gridTemplateColumns = '360px 1fr';
+      chartsWrap.style.gridTemplateColumns = '340px 1fr';
       chartsWrap.style.gap = '14px';
       chartsWrap.style.marginTop = '14px';
 
@@ -2044,10 +2120,29 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
       insightsCard.innerHTML = `
         <div style="font-size:12px;font-weight:900;">Executive Summary</div>
         <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.5;">
-          This report summarizes district heat-risk rankings from the cached daily analysis. It highlights the top-risk district and provides a full ranking table.
+          This report summarizes disease-amplified heat risk across monitored districts using the latest cached analysis.
         </div>
         <div style="margin-top:10px;font-size:12px;color:#334155;line-height:1.5;">
-          <b>Top risk:</b> ${safe(top?.district_name || report.districtName)} (${safe(top?.risk_status || report.riskStatus)}, score ${fmtNum(top?.risk_score, 3)}).
+          <b>Top risk:</b> ${safe(top?.district_name || report.districtName)} (${labelForStatus(top?.risk_status || report.riskStatus)}, heat risk ${fmtPct(top?.risk_score, 1)}).
+        </div>
+        <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.5;">
+          <b>Top district conditions:</b> Max temp ${fmtNum(top?.max_temp, 1)}°C, humidity ${fmtNum(top?.humidity, 1)}%, heat index ${fmtNum(top?.heat_index, 1)}°C.
+        </div>
+        <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.5;">
+          <b>Disease-amplified heat risk:</b> ${fmtPct(topWithReason?.mortality_risk_score, 1)} (top district).
+        </div>
+        ${topWithReason?.mortality_risk_reason ? `
+        <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.5;">
+          <b>Key disease factors:</b> ${safe(topWithReason?.mortality_risk_reason)}
+        </div>` : ''}
+        <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.5;">
+          <b>Highest disease-amplified risk:</b> ${safe(topDisease?.district_name || '—')} (${fmtPct(topDisease?.mortality_risk_score, 1)}), heat status ${labelForStatus(topDisease?.risk_status)}.
+        </div>
+        <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.5;">
+          <b>Disease data coverage:</b> ${safe(diseaseAvailable)} of ${safe(totalDistricts)} districts.
+        </div>
+        <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.5;">
+          <b>Methodology:</b> Heat risk is derived from temperature, humidity, and vulnerability indicators. Disease-amplified heat risk scales heat risk using district disease indicators from NFHS.
         </div>
       `;
 
@@ -2060,30 +2155,79 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
       tableCard.style.borderRadius = '14px';
       tableCard.style.overflow = 'hidden';
       tableCard.innerHTML = `
-        <div style="padding:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#f8fafc;border-bottom:1px solid #e5e7eb;">
-          <div>
-            <div style="font-size:12px;font-weight:900;">District Risk Rankings</div>
-            <div style="margin-top:2px;font-size:11px;color:#64748b;">Sorted by risk score (descending)</div>
+          <div style="padding:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#f8fafc;border-bottom:1px solid #e5e7eb;">
+            <div>
+              <div style="font-size:12px;font-weight:900;">District Risk Rankings</div>
+              <div style="margin-top:2px;font-size:11px;color:#64748b;">Sorted by heat risk (descending)</div>
+            </div>
+            <div style="font-size:11px;color:#475569;">Rows: ${Array.isArray(rankings) ? rankings.length : 0}</div>
           </div>
-          <div style="font-size:11px;color:#475569;">Rows: ${Array.isArray(rankings) ? rankings.length : 0}</div>
+          <table style="width:100%;border-collapse:collapse;font-size:11px;">
+            <thead>
+              <tr style="background:#ffffff;">
+                <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">Rank</th>
+                <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">District</th>
+                <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">State</th>
+                <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">Status</th>
+                <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">Heat Risk</th>
+                <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">Disease-Amplified</th>
+              </tr>
+            </thead>
+            <tbody id="hg_rank_rows"></tbody>
+          </table>
+        `;
+
+      const insightsAfter = document.createElement('div');
+      insightsAfter.style.marginTop = '14px';
+      insightsAfter.style.display = 'grid';
+      insightsAfter.style.gridTemplateColumns = '1.1fr 1fr';
+      insightsAfter.style.gap = '12px';
+      insightsAfter.innerHTML = `
+        <div style="border:1px solid #e5e7eb;border-radius:14px;padding:12px;">
+          <div style="font-size:12px;font-weight:900;">Notable Findings</div>
+          <ul style="margin:8px 0 0 16px;font-size:12px;color:#334155;line-height:1.5;padding:0;">
+            <li><b>Lowest heat risk:</b> ${safe(bottomRisk?.district_name || '—')} (${fmtPct(bottomRisk?.risk_score, 1)}).</li>
+            <li><b>Highest vulnerability:</b> ${safe(topVulnerable?.district_name || '—')} (${fmtNum(topVulnerable?.pct_vulnerable_social, 1)}% vulnerable population).</li>
+            <li><b>Highest outdoor workers:</b> ${safe(topOutdoor?.district_name || '—')} (${fmtNum(topOutdoor?.pct_outdoor_workers, 1)}%).</li>
+            <li><b>Highest child population:</b> ${safe(topChildren?.district_name || '—')} (${fmtNum(topChildren?.pct_children, 1)}%).</li>
+          </ul>
         </div>
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead>
-            <tr style="background:#ffffff;">
-              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">Rank</th>
-              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">District</th>
-              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">Status</th>
-              <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:10px;">Score</th>
-            </tr>
-          </thead>
-          <tbody id="hg_rank_rows"></tbody>
-        </table>
+        <div style="border:1px solid #e5e7eb;border-radius:14px;padding:12px;background:#f8fafc;">
+          <div style="font-size:12px;font-weight:900;">Risk Distribution Summary</div>
+          <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.5;">
+            High risk: <b>${safe(highRiskCount)}</b> districts • Moderate risk: <b>${safe(medRiskCount)}</b> districts • Low risk: <b>${safe(lowRiskCount)}</b> districts.
+          </div>
+          <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.5;">
+            Disease coverage: <b>${safe(diseaseAvailable)}</b> of <b>${safe(totalDistricts)}</b> districts have disease-amplified estimates.
+          </div>
+        </div>
+      `;
+
+      const chartsAfter = document.createElement('div');
+      chartsAfter.style.marginTop = '14px';
+      chartsAfter.style.display = 'grid';
+      chartsAfter.style.gridTemplateColumns = '1fr 1fr';
+      chartsAfter.style.gap = '12px';
+      chartsAfter.innerHTML = `
+        <div style="border:1px solid #e5e7eb;border-radius:14px;padding:12px;">
+          <div style="font-size:12px;font-weight:900;">Top 10 Heat Risk Districts</div>
+          <canvas id="hg_top_heat" width="380" height="260" style="margin-top:8px;display:block;"></canvas>
+        </div>
+        <div style="border:1px solid #e5e7eb;border-radius:14px;padding:12px;">
+          <div style="font-size:12px;font-weight:900;">Top 10 Disease-Amplified Risk</div>
+          <canvas id="hg_top_disease" width="380" height="260" style="margin-top:8px;display:${topDiseaseList.length ? 'block' : 'none'};"></canvas>
+          <div id="hg_top_disease_empty" style="margin-top:8px;font-size:11px;color:#64748b;display:${topDiseaseList.length ? 'none' : 'block'};">
+            No disease-amplified data available.
+          </div>
+        </div>
       `;
 
       container.appendChild(header);
       container.appendChild(cards);
       container.appendChild(chartsWrap);
       container.appendChild(tableCard);
+      container.appendChild(insightsAfter);
+      container.appendChild(chartsAfter);
       document.body.appendChild(container);
 
       // Fill rankings rows
@@ -2095,16 +2239,22 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
         rowsEl.innerHTML = sortedRanks
           .map((r: any, idx: number) => {
             const bg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
-            const st = safe(r?.risk_status);
-            const c = colorForStatus(st);
+            const stKey = String(r?.risk_status ?? 'unknown').trim().toLowerCase() || 'unknown';
+            const stLabel = labelForStatus(stKey);
+            const c = colorForStatus(stKey);
             return `
               <tr style="background:${bg};">
                 <td style="padding:8px 12px;border-bottom:1px solid #eef2f7;">${idx + 1}</td>
                 <td style="padding:8px 12px;border-bottom:1px solid #eef2f7;font-weight:700;">${safe(r?.district_name)}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eef2f7;">${safe(r?.state)}</td>
                 <td style="padding:8px 12px;border-bottom:1px solid #eef2f7;">
-                  <span style="display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid ${c}33;background:${c}1A;color:${c};font-weight:800;font-size:10px;">${st}</span>
+                  <span style="display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:10px;color:#334155;">
+                    <span style="width:8px;height:8px;border-radius:999px;background:${c};display:inline-block;"></span>
+                    ${stLabel}
+                  </span>
                 </td>
-                <td style="padding:8px 12px;border-bottom:1px solid #eef2f7;text-align:right;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace;">${fmtNum(r?.risk_score, 3)}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eef2f7;text-align:right;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace;">${fmtPct(r?.risk_score, 1)}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eef2f7;text-align:right;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace;">${fmtPct(r?.mortality_risk_score, 1)}</td>
               </tr>
             `;
           })
@@ -2125,7 +2275,7 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
             return `
               <div style="display:flex;align-items:center;gap:8px;">
                 <span style="width:10px;height:10px;border-radius:3px;background:${c};display:inline-block;"></span>
-                <span style="font-size:11px;color:#334155;"><b>${safe(k)}</b> — ${v} (${pct}%)</span>
+                <span style="font-size:11px;color:#334155;"><b>${labelForStatus(k)}</b> — ${v} (${pct}%)</span>
               </div>
             `;
           })
@@ -2158,39 +2308,116 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
         }
       }
 
+      const drawBarChart = (
+        canvasEl: HTMLCanvasElement | null,
+        items: any[],
+        valueKey: 'risk_score' | 'mortality_risk_score',
+        color: string
+      ) => {
+        if (!canvasEl || !items.length) return;
+        const ctx = canvasEl.getContext('2d');
+        if (!ctx) return;
+        const w = canvasEl.width;
+        const h = canvasEl.height;
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        const labelW = 150;
+        const rightPad = 40;
+        const barAreaW = w - labelW - rightPad - 10;
+        const barH = Math.max(12, Math.floor((h - 12) / items.length) - 6);
+        const maxVal = Math.max(...items.map(r => Number(r?.[valueKey] ?? 0)), 0.0001);
+        ctx.font = '10px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
+        ctx.textBaseline = 'middle';
+        items.forEach((r, idx) => {
+          const v = Number(r?.[valueKey] ?? 0);
+          const y = 8 + idx * (barH + 6);
+          const barW = Math.max(2, (v / maxVal) * barAreaW);
+          ctx.fillStyle = '#0f172a';
+          ctx.fillText(String(r?.district_name || '—').slice(0, 18), 6, y + barH / 2);
+          ctx.fillStyle = color;
+          ctx.fillRect(labelW, y, barW, barH);
+          ctx.fillStyle = '#334155';
+          ctx.fillText(fmtPct(v, 1), labelW + barW + 6, y + barH / 2);
+        });
+      };
+
+      drawBarChart(container.querySelector('#hg_top_heat') as HTMLCanvasElement | null, topHeatList, 'risk_score', '#EF4444');
+      drawBarChart(container.querySelector('#hg_top_disease') as HTMLCanvasElement | null, topDiseaseList, 'mortality_risk_score', '#8B5CF6');
+
       // Render to canvas.
-  const canvas = await html2canvas(container, {
+      const canvas = await html2canvas(container, {
         backgroundColor: '#ffffff',
         scale: 2,
         useCORS: true
       });
 
-      const imgData = canvas.toDataURL('image/png');
+      const trimCanvasHeight = (src: HTMLCanvasElement) => {
+        const ctx = src.getContext('2d');
+        if (!ctx) return src.height;
+        const { width, height } = src;
+        const data = ctx.getImageData(0, 0, width, height).data;
+        for (let y = height - 1; y >= 0; y -= 1) {
+          const row = y * width * 4;
+          let hasInk = false;
+          for (let x = 0; x < width; x += 2) {
+            const i = row + x * 4;
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const a = data[i + 3];
+            if (a > 0 && (r < 250 || g < 250 || b < 250)) {
+              hasInk = true;
+              break;
+            }
+          }
+          if (hasInk) return y + 1;
+        }
+        return src.height;
+      };
+
+      const trimmedHeight = trimCanvasHeight(canvas);
+      const workCanvas = (() => {
+        if (trimmedHeight >= canvas.height) return canvas;
+        const trimmed = document.createElement('canvas');
+        trimmed.width = canvas.width;
+        trimmed.height = trimmedHeight;
+        const tctx = trimmed.getContext('2d');
+        if (tctx) {
+          tctx.fillStyle = '#ffffff';
+          tctx.fillRect(0, 0, trimmed.width, trimmed.height);
+          tctx.drawImage(canvas, 0, 0, canvas.width, trimmedHeight, 0, 0, trimmed.width, trimmedHeight);
+        }
+        return trimmed;
+      })();
+
+      const imgData = workCanvas.toDataURL('image/png');
       const imgW = usableW;
-      const imgH = (canvas.height * imgW) / canvas.width;
+      const imgH = (workCanvas.height * imgW) / workCanvas.width;
 
       // Slice across PDF pages to avoid awkward whitespace.
       let remaining = imgH;
       let yOffset = 0;
       let pageIndex = 0;
 
-      while (remaining > 0) {
+      const minSlice = 72; // avoid nearly empty trailing pages
+      while (remaining > minSlice) {
         if (pageIndex > 0) doc.addPage();
         const sliceH = Math.min(remaining, usableH);
 
         // Create a slice canvas for this page.
         const slice = document.createElement('canvas');
-        slice.width = canvas.width;
-        slice.height = Math.floor((sliceH * canvas.width) / imgW);
+        slice.width = workCanvas.width;
+        slice.height = Math.floor((sliceH * workCanvas.width) / imgW);
         const sctx = slice.getContext('2d');
         if (sctx) {
           sctx.fillStyle = '#ffffff';
           sctx.fillRect(0, 0, slice.width, slice.height);
           sctx.drawImage(
-            canvas,
+            workCanvas,
             0,
-            Math.floor((yOffset * canvas.width) / imgW),
-            canvas.width,
+            Math.floor((yOffset * workCanvas.width) / imgW),
+            workCanvas.width,
             slice.height,
             0,
             0,
