@@ -35,3 +35,7 @@ frontend/.git/
 *.njsproj
 *.sln
 *.sw?
+# Local envs and databases
+backend/.venv/
+district_analytics.db
+backend/district_analytics.db

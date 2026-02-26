@@ -1014,7 +1014,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                     </div>
                     <div className="bg-slate-800/50 p-3 rounded-lg">
                         <div className="flex justify-between items-center">
-                          <span className="text-sm text-slate-300">Mortality risk</span>
+                        <span className="text-sm text-slate-300">Disease-amplified heat risk</span>
                           <span className="text-xl font-bold text-amber-300">
                               {typeof selectedDistrict.mortality_risk_score === 'number'
                                 ? `${(selectedDistrict.mortality_risk_score * 100).toFixed(0)}%`
@@ -2378,7 +2378,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     } catch (e: any) {
       setMortalityRiskItems([]);
       setMortalityUpdatedAt(null);
-      setMortalityError(e?.message || 'Failed to load mortality risk');
+      setMortalityError(e?.message || 'Failed to load disease-amplified heat risk');
     } finally {
       setMortalityLoading(false);
     }
@@ -2735,13 +2735,13 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       />
     </div>
 
-    {/* Mortality Risk Section */}
+    {/* Disease-Amplified Heat Risk Section */}
     <div className="bg-card rounded-2xl border-2 border-border shadow-3d p-6 mb-8">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
         <div>
           <h3 className="text-lg font-bold flex items-center gap-2">
             <AlertTriangle className="text-primary" size={20} />
-            Mortality Risk
+            Disease-amplified heat risk
           </h3>
           <p className="text-xs text-muted-foreground">
             Heat hospitalization risk adjusted by district disease prevalence indicators.
@@ -2764,12 +2764,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       {mortalityLoading ? (
         <div className="flex items-center justify-center py-8 text-muted-foreground gap-3">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          Loading mortality risk...
+          Loading disease-amplified heat risk...
         </div>
       ) : mortalityError ? (
         <div className="text-sm text-destructive">{mortalityError}</div>
       ) : mortalityTopItems.length === 0 ? (
-        <div className="text-sm text-muted-foreground">No mortality risk data available yet.</div>
+        <div className="text-sm text-muted-foreground">No disease-amplified heat risk data available yet.</div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
           {mortalityTopItems.map((item) => {
@@ -2790,7 +2790,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs text-muted-foreground uppercase">Mortality Risk</div>
+                  <div className="text-xs text-muted-foreground uppercase">Disease-amplified heat risk</div>
                   <div className="text-lg font-bold text-primary">
                     {(item.mortality_risk_score * 100).toFixed(1)}%
                   </div>
@@ -2804,7 +2804,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                     {item.mortality_risk_reason.replace(/^Risk factors:\s*/i, '')}
                   </>
                 ) : (
-                  'Disease indicators drive the uplift in mortality risk.'
+                  'Disease indicators drive the uplift in heat risk.'
                 )}
               </div>
             </div>

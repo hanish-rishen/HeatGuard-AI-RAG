@@ -44,7 +44,7 @@ export const RankingsView: React.FC<{ rankings: DistrictRanking[]; loading: bool
                       <tr>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Rank</th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">District</th>
-                        <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Heat + Mortality Risk</th>
+                        <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Heat + Disease-Amplified Risk</th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Population Demographics</th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">LST <span className="text-[10px] lowercase">(°C)</span></th>
                         <th className="px-6 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider bg-card">Air Temp <span className="text-[10px] lowercase">(°C)</span></th>
@@ -83,7 +83,7 @@ export const RankingsView: React.FC<{ rankings: DistrictRanking[]; loading: bool
                                       style={{ width: `${district.risk_score * 100}%` }}
                                     ></div>
                                   </div>
-                                  <div className="mt-3 text-xs font-semibold text-muted-foreground uppercase">Mortality risk</div>
+                                  <div className="mt-3 text-xs font-semibold text-muted-foreground uppercase">Disease-amplified heat risk</div>
                                   <div className="text-base font-bold text-foreground">
                                     {typeof district.mortality_risk_score === 'number'
                                       ? `${(district.mortality_risk_score * 100).toFixed(1)}%`

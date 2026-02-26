@@ -157,7 +157,7 @@ class DBManager:
                 INSERT OR REPLACE INTO daily_analysis (
                     date, district_name, lat, lon, risk_score, risk_status, heat_index,
                     max_temp, humidity, lst, pct_children, pct_outdoor_workers, pct_vulnerable_social
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 datetime.now().strftime("%Y-%m-%d"),
                 data['district_name'],
