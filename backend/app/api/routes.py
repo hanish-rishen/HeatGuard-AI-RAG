@@ -8,8 +8,8 @@ PURPOSE: Orchestrates the request/response flow. Receives data, calls the
 predictive/prescriptive engines, and constructs the final response.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, BackgroundTasks
-from datetime import datetime
+from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, BackgroundTasks, Request
+from datetime import datetime, timedelta
 import uuid
 import logging
 import json
@@ -18,6 +18,9 @@ import io
 import numpy as np
 from typing import List
 from fastapi.responses import StreamingResponse
+import hashlib
+import hmac
+import base64
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +43,9 @@ from app.schemas.models import (
     DistrictData,
     SourceDocument,
     DocumentUploadResponse,
-    ChatRequest
+    ChatRequest,
+    LoginRequest,
+    TokenResponse
 )
 from app.services.predictive_engine import predictive_engine
 from app.services.prescriptive_engine import prescriptive_engine
@@ -51,6 +56,78 @@ from app.core.config import get_settings
 
 router = APIRouter()
 settings = get_settings()
+
+
+def _hash_password(password: str, secret: str) -> str:
+    digest = hmac.new(secret.encode("utf-8"), password.encode("utf-8"), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+
+
+def _get_admin_password_hash() -> str:
+    if settings.auth_admin_password_hash:
+        return settings.auth_admin_password_hash.strip()
+    return _hash_password(settings.auth_admin_password, settings.jwt_secret_key)
+
+
+def _verify_password(password: str) -> bool:
+    expected = _get_admin_password_hash()
+    provided = _hash_password(password, settings.jwt_secret_key)
+    return hmac.compare_digest(expected, provided)
+
+
+def _generate_access_token(subject: str, expires_delta: timedelta) -> str:
+    header = {"alg": settings.jwt_algorithm, "typ": "JWT"}
+    now = datetime.utcnow()
+    payload = {
+        "sub": subject,
+        "iat": int(now.timestamp()),
+        "exp": int((now + expires_delta).timestamp())
+    }
+    header_b64 = base64.urlsafe_b64encode(json.dumps(header, separators=(",", ":")).encode("utf-8")).decode("utf-8").rstrip("=")
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("utf-8").rstrip("=")
+    signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
+    signature = hmac.new(settings.jwt_secret_key.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    signature_b64 = base64.urlsafe_b64encode(signature).decode("utf-8").rstrip("=")
+    return f"{header_b64}.{payload_b64}.{signature_b64}"
+
+
+def _decode_token(token: str) -> dict:
+    try:
+        header_b64, payload_b64, signature_b64 = token.split(".")
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid token format")
+
+    signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
+    expected_sig = hmac.new(settings.jwt_secret_key.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    expected_sig_b64 = base64.urlsafe_b64encode(expected_sig).decode("utf-8").rstrip("=")
+    if not hmac.compare_digest(signature_b64, expected_sig_b64):
+        raise HTTPException(status_code=401, detail="Invalid token signature")
+
+    padded_payload = payload_b64 + "=" * (-len(payload_b64) % 4)
+    try:
+        payload_json = base64.urlsafe_b64decode(padded_payload.encode("utf-8")).decode("utf-8")
+        payload = json.loads(payload_json)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+    exp = payload.get("exp")
+    if not isinstance(exp, int) or datetime.utcnow().timestamp() >= exp:
+        raise HTTPException(status_code=401, detail="Token expired")
+    return payload
+
+
+def _get_token_from_request(request: Request) -> str:
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        return auth_header.split(" ", 1)[1].strip()
+    token_param = request.query_params.get("token")
+    if token_param:
+        return token_param
+    raise HTTPException(status_code=401, detail="Missing token")
+
+
+def require_auth(request: Request) -> dict:
+    token = _get_token_from_request(request)
+    return _decode_token(token)
 
 
 def _normalize_district_for_geocode(name: str) -> str:
@@ -112,8 +189,27 @@ async def health_check():
         version=settings.app_version
     )
 
+
+@router.post("/auth/login", response_model=TokenResponse)
+async def login(request: LoginRequest):
+    if request.username != settings.auth_admin_username or not _verify_password(request.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    expires_minutes = max(1, int(settings.jwt_access_token_expire_minutes))
+    expires_delta = timedelta(minutes=expires_minutes)
+    token = _generate_access_token(request.username, expires_delta)
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        expires_in=expires_minutes * 60
+    )
+
+
+@router.get("/auth/verify")
+async def verify_auth(_: dict = Depends(require_auth)):
+    return {"status": "ok"}
+
 @router.get("/files", response_model=List[dict])
-async def list_files():
+async def list_files(_: dict = Depends(require_auth)):
     """
     PURPOSE: List all uploaded files/documents for RAG context.
     """
@@ -121,7 +217,7 @@ async def list_files():
     return files
 
 @router.delete("/files/{filename}")
-async def delete_file(filename: str):
+async def delete_file(filename: str, _: dict = Depends(require_auth)):
     """
     PURPOSE: Delete a file from the system (DB + RAG).
     """
@@ -234,7 +330,8 @@ def process_document_background(filename: str, content: bytes, content_type: str
 @router.post("/upload", response_model=DocumentUploadResponse)
 async def upload_document(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    _: dict = Depends(require_auth)
 ):
     """
     PURPOSE: Upload and process a document (PDF, Image, Text) for the RAG system.
@@ -274,7 +371,7 @@ async def upload_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/analyze", response_model=AnalysisResponse)
-async def analyze_district(request: AnalysisRequest):
+async def analyze_district(request: AnalysisRequest, _: dict = Depends(require_auth)):
     """
     PURPOSE: Core endpoint for Heat-Health Analysis.
 
@@ -364,7 +461,7 @@ async def analyze_district(request: AnalysisRequest):
     )
 
 @router.post("/chat")
-async def chat_rag_endpoint(request: ChatRequest):
+async def chat_rag_endpoint(request: ChatRequest, _: dict = Depends(require_auth)):
     """
     PURPOSE: General QA Chat endpoint.
     Retrieves context from ChromaDB and answers using LLM (if available).
@@ -377,7 +474,7 @@ async def chat_rag_endpoint(request: ChatRequest):
     return response_data
 
 @router.post("/seed_data")
-async def seed_knowledge_base():
+async def seed_knowledge_base(_: dict = Depends(require_auth)):
     """
     PURPOSE: Helper to seed ChromaDB with some initial dummy data
     if the user doesn't have PDFs to upload yet.
@@ -409,7 +506,7 @@ async def seed_knowledge_base():
     return {"message": f"Seeded {count} dummy documents into ChromaDB."}
 
 @router.get("/districts/rankings")
-async def get_district_rankings():
+async def get_district_rankings(_: dict = Depends(require_auth)):
     """
     PURPOSE: Auto-fetches real-time data for districts.
     Logic: Checks DB for today's data. If exists, returns it. Else, runs analysis.
@@ -602,7 +699,7 @@ async def get_mortality_risk():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/districts/{district_name}/history", response_model=list[dict])
-async def get_district_history(district_name: str, limit: int = 30):
+async def get_district_history(district_name: str, limit: int = 30, _: dict = Depends(require_auth)):
     """
         Get historical trend data for a specific district.
 

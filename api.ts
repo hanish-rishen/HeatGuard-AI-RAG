@@ -83,9 +83,25 @@ export interface DocumentUploadResponse {
     chunks_processed: number;
 }
 
+export interface TokenResponse {
+    access_token: string;
+    token_type: string;
+    expires_in: number;
+}
+
 // --- API Client ---
 
 const API_BASE_URL = 'http://localhost:8000/api';
+const AUTH_STORAGE_KEY = 'heatguard_auth_token_v1';
+
+const getTokenSafe = () => {
+    try {
+        return localStorage.getItem(AUTH_STORAGE_KEY);
+    } catch (err) {
+        console.warn("Local storage unavailable for auth token.", err);
+        return null;
+    }
+};
 
 const api = axios.create({
     baseURL: API_BASE_URL,
@@ -94,7 +110,57 @@ const api = axios.create({
     },
 });
 
+api.interceptors.request.use((config) => {
+    const token = getTokenSafe();
+    if (token) {
+        config.headers = config.headers || {};
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
 export const HeatGuardAPI = {
+    getRankingsStreamUrl: (token?: string | null) => {
+        if (token) {
+            return `${API_BASE_URL}/districts/rankings?token=${encodeURIComponent(token)}`;
+        }
+        return `${API_BASE_URL}/districts/rankings`;
+    },
+    login: async (username: string, password: string): Promise<TokenResponse> => {
+        const response = await api.post<TokenResponse>('/auth/login', { username, password });
+        if (response.data?.access_token) {
+            try {
+                localStorage.setItem(AUTH_STORAGE_KEY, response.data.access_token);
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new Event('heatguard-auth'));
+                }
+            } catch (err) {
+                console.warn("Unable to persist auth token.", err);
+            }
+        }
+        return response.data;
+    },
+    verifyAuth: async (): Promise<boolean> => {
+        try {
+            await api.get('/auth/verify', { timeout: 4000 });
+            return true;
+        } catch {
+            return false;
+        }
+    },
+    logout: () => {
+        try {
+            localStorage.removeItem(AUTH_STORAGE_KEY);
+            if (typeof window !== 'undefined') {
+                window.dispatchEvent(new Event('heatguard-auth'));
+            }
+        } catch (err) {
+            console.warn("Unable to clear auth token.", err);
+        }
+    },
+    getStoredToken: () => {
+        return getTokenSafe();
+    },
     // Check backend health
     checkHealth: async (): Promise<HealthCheckResponse> => {
         const response = await api.get<HealthCheckResponse>('/health');

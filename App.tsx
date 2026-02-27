@@ -3,7 +3,9 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { LogConsole } from './components/LogConsole';
 import Dashboard from './pages/Dashboard';
 import { RankingsPage } from './pages/RankingsPage';
-import { DistrictRanking } from './api';
+import { DistrictRanking, HeatGuardAPI } from './api';
+import { LoginPage } from './pages/LoginPage';
+import { RequireAuth } from './pages/RequireAuth';
 
 const MainApp: React.FC = () => {
     // Global State
@@ -20,7 +22,12 @@ const MainApp: React.FC = () => {
         hasInitializedRef.current = true;
 
         const connectToStream = async () => {
-             const eventSource = new EventSource('http://localhost:8000/api/districts/rankings');
+             const token = HeatGuardAPI.getStoredToken();
+             if (!token) {
+                 setRankingsLoading(false);
+                 return;
+             }
+             const eventSource = new EventSource(HeatGuardAPI.getRankingsStreamUrl(token));
 
              eventSource.onopen = () => {
                  console.log("Connection opened");
@@ -80,8 +87,23 @@ const MainApp: React.FC = () => {
     return (
         <Router>
             <Routes>
-                <Route path="/" element={<Dashboard rankings={rankings} rankingsLoading={rankingsLoading} logs={logs} />} />
-                <Route path="/rankings" element={<RankingsPage rankings={rankings} loading={rankingsLoading} />} />
+                <Route path="/login" element={<LoginPage />} />
+                <Route
+                    path="/"
+                    element={(
+                        <RequireAuth>
+                            <Dashboard rankings={rankings} rankingsLoading={rankingsLoading} logs={logs} />
+                        </RequireAuth>
+                    )}
+                />
+                <Route
+                    path="/rankings"
+                    element={(
+                        <RequireAuth>
+                            <RankingsPage rankings={rankings} loading={rankingsLoading} />
+                        </RequireAuth>
+                    )}
+                />
             </Routes>
         </Router>
     );

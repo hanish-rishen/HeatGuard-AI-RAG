@@ -38,7 +38,8 @@ import {
   X,
   Thermometer,
   Droplet,
-  ScrollText // Added ScrollText icon
+  ScrollText,
+  LogOut
 } from 'lucide-react';
 import {
   AreaChart,
@@ -2961,21 +2962,31 @@ const Dashboard: React.FC<DashboardProps> = ({ rankings, rankingsLoading, logs }
           </div>
         </div>
 
-        <div className="p-4 space-y-1 border-t border-sidebar-border mt-2">
-          <NavItem icon={<Settings size={20} />} label="Settings" collapsed={isSidebarCollapsed && !isMobileMenuOpen} />
-          <NavItem icon={<LifeBuoy size={20} />} label="Support" collapsed={isSidebarCollapsed && !isMobileMenuOpen} />
-        </div>
-
-        <div className="p-4 mx-2 mb-2 flex flex-col gap-2">
-          <div className={`flex items-center gap-3 cursor-pointer p-2 rounded-xl hover:bg-sidebar-accent/10 transition-colors ${isSidebarCollapsed && !isMobileMenuOpen ? 'justify-center w-full' : ''}`}>
-            <div className="w-9 h-9 flex-shrink-0 rounded-full bg-sidebar-border text-sidebar-foreground flex items-center justify-center shadow-sm">
-              <User size={18} />
-            </div>
+        <div className="px-4 pt-3 pb-4 mx-2 mb-2 flex flex-col gap-2 border-t border-sidebar-border">
+          <div className={`px-3 text-xs font-bold text-sidebar-foreground/70 uppercase tracking-wider transition-opacity duration-300 ${isSidebarCollapsed && !isMobileMenuOpen ? 'opacity-0 h-0 overflow-hidden' : 'opacity-100'}`}>
+            Profile
+          </div>
+          <div className={`flex items-center gap-3 p-2 rounded-xl border border-transparent ${isSidebarCollapsed && !isMobileMenuOpen ? 'justify-center w-full' : ''}`}>
             <div className={`flex-1 overflow-hidden transition-all duration-300 ${(isSidebarCollapsed && !isMobileMenuOpen) ? 'w-0 opacity-0 absolute' : 'w-auto opacity-100'}`}>
-              <div className="text-sm font-medium text-sidebar-foreground truncate">HeatGuard Admin</div>
-              <div className="text-xs text-sidebar-foreground/50 truncate">admin@heatguard.ai</div>
+              <div className="inline-flex items-center gap-3 rounded-lg border border-sidebar-border/60 px-2 py-1">
+                <div className="w-9 h-9 flex-shrink-0 rounded-full bg-sidebar-border text-sidebar-foreground flex items-center justify-center shadow-sm">
+                  <User size={18} />
+                </div>
+                <div className="text-sm font-medium text-sidebar-foreground">HeatGuard Admin</div>
+              </div>
             </div>
-            {(!isSidebarCollapsed || isMobileMenuOpen) && <Settings size={14} className="text-sidebar-foreground/50 flex-shrink-0" />}
+            {(!isSidebarCollapsed || isMobileMenuOpen) && (
+              <button
+                onClick={() => {
+                  HeatGuardAPI.logout();
+                  navigate('/login');
+                }}
+                className="w-8 h-8 rounded-full border border-red-500/60 text-red-400 hover:bg-red-500/10 flex items-center justify-center"
+                title="Log out"
+              >
+                <LogOut size={14} />
+              </button>
+            )}
           </div>
         </div>
       </aside>

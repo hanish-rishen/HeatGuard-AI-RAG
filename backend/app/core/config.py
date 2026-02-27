@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     # ------------------------------------
     mistral_api_key: Optional[str] = None
     mistral_model: str = "mistral-small-latest"
+
+    # ------------------------------------
+    # Authentication (JWT)
+    # ------------------------------------
+    auth_admin_username: str = "admin"
+    auth_admin_password: str = "admin123"
+    auth_admin_password_hash: Optional[str] = None
+    jwt_secret_key: str = "change-me"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60
     
     # ------------------------------------
     # Risk Thresholds for RAG Status

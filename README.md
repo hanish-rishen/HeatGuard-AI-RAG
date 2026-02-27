@@ -58,6 +58,7 @@ UI typically runs at `http://localhost:5173`.
 ## API (common endpoints)
 
 - `GET /api/health` — health check
+- `POST /api/auth/login` — obtain JWT access token
 - `POST /api/analyze` — run analysis + get prescriptive advice
 - `GET /api/rankings` — district risk rankings feed
 - `GET /api/districts/{district}/history?limit=...` — district trend history

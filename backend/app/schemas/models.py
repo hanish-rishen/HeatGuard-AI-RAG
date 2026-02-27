@@ -233,4 +233,20 @@ class ChatRequest(BaseModel):
     )
 
 
+class LoginRequest(BaseModel):
+    """
+    PURPOSE: Request payload for login.
+    CONSUMERS: /auth/login endpoint
+    """
+    username: str = Field(..., description="Admin username")
+    password: str = Field(..., description="Admin password")
 
+
+class TokenResponse(BaseModel):
+    """
+    PURPOSE: Response payload for access tokens.
+    CONSUMERS: Frontend login flow
+    """
+    access_token: str = Field(..., description="JWT access token")
+    token_type: str = Field("bearer", description="Token type")
+    expires_in: int = Field(..., description="Expiration in seconds")
