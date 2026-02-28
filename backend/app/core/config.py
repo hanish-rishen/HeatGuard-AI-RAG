@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = True
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 8080
     
     # ------------------------------------
     # Model Paths (relative to backend dir)
