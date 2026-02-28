@@ -111,7 +111,7 @@ export interface TokenResponse {
 
 // --- API Client ---
 
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = 'http://localhost:8080/api';
 const AUTH_STORAGE_KEY = 'heatguard_auth_token_v1';
 
 const getTokenSafe = () => {
@@ -243,5 +243,6 @@ export const HeatGuardAPI = {
         await api.delete(`/files/${encodeURIComponent(filename)}`);
     },
 };
+
 
 

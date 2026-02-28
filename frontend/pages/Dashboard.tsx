@@ -1201,8 +1201,8 @@ const RagEngineView = () => {
     try {
       await new Promise<void>((resolve) => {
         const url = force
-          ? `http://localhost:8000/api/districts/rankings?force=1&_ts=${Date.now()}`
-          : 'http://localhost:8000/api/districts/rankings';
+          ? `http://localhost:8080/api/districts/rankings?force=1&_ts=${Date.now()}`
+          : 'http://localhost:8080/api/districts/rankings';
         const eventSource = new EventSource(url);
 
         const kill = window.setTimeout(() => {
@@ -1351,7 +1351,7 @@ const RagEngineView = () => {
           // ignore
         }
 
-        const response = await fetch('http://localhost:8000/api/chat', {
+        const response = await fetch('http://localhost:8080/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: userText, district_context: districtContext })
@@ -1846,7 +1846,7 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
   const createDailyTopRiskReport = async () => {
     try {
       const rankingsData: any = await new Promise((resolve, reject) => {
-        const es = new EventSource('http://localhost:8000/api/districts/rankings');
+        const es = new EventSource('http://localhost:8080/api/districts/rankings');
         const timeout = window.setTimeout(() => {
           es.close();
           reject(new Error('Timeout loading rankings'));
@@ -2630,7 +2630,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     try {
       console.log('[Dashboard] Refetch requested.');
       await new Promise<void>((resolve, reject) => {
-        const es = new EventSource(`http://localhost:8000/api/districts/rankings?force=1&_ts=${Date.now()}`);
+        const es = new EventSource(`http://localhost:8080/api/districts/rankings?force=1&_ts=${Date.now()}`);
         const timeout = window.setTimeout(() => {
           es.close();
           reject(new Error('Timeout refetching rankings'));
@@ -3395,6 +3395,7 @@ const Dashboard: React.FC<DashboardProps> = ({ rankings, rankingsLoading, logs }
 };
 
 export default Dashboard;
+
 
 
 

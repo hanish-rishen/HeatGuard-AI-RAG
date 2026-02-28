@@ -34,7 +34,8 @@ npm run build
 
 ## Configure API base URL
 
-This frontend calls the FastAPI backend (typically `http://localhost:8000`).
+This frontend calls the FastAPI backend (typically `http://localhost:8080`).
 
 If you need to change the backend URL, check `frontend/api.ts` (and any environment-based configuration your deployment uses).
+
 

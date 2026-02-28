@@ -24,10 +24,10 @@ cd backend
 python -m venv venv
 .\venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
 ```
 
-API docs: `http://localhost:8000/docs`
+API docs: `http://localhost:8080/docs`
 
 #### Environment
 
@@ -46,7 +46,7 @@ npm run dev
 
 UI typically runs at `http://localhost:5173`.
 
-> The frontend expects the backend at `http://localhost:8000/api` by default. See `frontend/api.ts` if you need to change it.
+> The frontend expects the backend at `http://localhost:8080/api` by default. See `frontend/api.ts` if you need to change it.
 
 ## Key capabilities
 
@@ -68,4 +68,5 @@ UI typically runs at `http://localhost:5173`.
 
 - Local artifacts like `backend/chroma_db/`, `backend/*.db`, and Python `__pycache__/` are ignored and not committed.
 - If you see a local `district_analytics.db` at repo root, it’s a runtime artifact and should stay untracked.
+
 
