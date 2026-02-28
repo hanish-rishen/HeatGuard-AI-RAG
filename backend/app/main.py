@@ -82,6 +82,10 @@ async def root():
         "docs_url": "/docs"
     }
 
+@app.get("/kaithheathcheck")
+async def healthcheck():
+    return {"status": "ok"}
+
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app", 
