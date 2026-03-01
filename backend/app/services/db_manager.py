@@ -25,7 +25,8 @@ class DBManager:
             self._initialized = True
 
     def init_db(self):
-        self.db_path = get_backend_dir().parent / "district_analytics.db"
+        # Store DB inside backend directory (not parent) for container compatibility
+        self.db_path = get_backend_dir() / "district_analytics.db"
         try:
             # Ensure parent directory exists
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
