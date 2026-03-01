@@ -27,6 +27,8 @@ class DBManager:
     def init_db(self):
         self.db_path = get_backend_dir().parent / "district_analytics.db"
         try:
+            # Ensure parent directory exists
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
