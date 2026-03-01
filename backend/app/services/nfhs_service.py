@@ -7,11 +7,21 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Optional
 
-import pandas as pd
-
 from app.core.config import get_backend_dir
 
 logger = logging.getLogger(__name__)
+
+# Lazy import for pandas
+pd = None
+
+
+def _get_pandas():
+    global pd
+    if pd is None:
+        import pandas as _pd
+
+        pd = _pd
+    return pd
 
 
 class NFHSMortalityService:
@@ -31,8 +41,14 @@ class NFHSMortalityService:
         self.district_state: Dict[str, str] = {}
         self.district_state_lower: Dict[str, str] = {}
         self.indicator_stats: Dict[str, Dict[str, Optional[float]]] = {}
-        self._load_nfhs_data()
+        self._data_loaded = False
         NFHSMortalityService._initialized = True
+
+    def _ensure_loaded(self):
+        """Lazy load data on first use."""
+        if not self._data_loaded:
+            self._load_nfhs_data()
+            self._data_loaded = True
 
     def _load_nfhs_data(self) -> None:
         try:
@@ -43,7 +59,8 @@ class NFHSMortalityService:
                 logger.error(f"NFHS dataset not found at {csv_path}")
                 return
 
-            df = pd.read_csv(csv_path)
+            pandas = _get_pandas()
+            df = pandas.read_csv(csv_path)
 
             indicator_map = {
                 "overweight_children_pct": "77. Children under 5 years who are overweight (weight-for-height)20 (%)",
@@ -69,7 +86,7 @@ class NFHSMortalityService:
                 logger.warning("NFHS dataset did not contain expected indicators")
                 return
 
-            df["NFHS-5"] = pd.to_numeric(df["NFHS-5"], errors="coerce")
+            df["NFHS-5"] = pandas.to_numeric(df["NFHS-5"], errors="coerce")
             pivot = df.pivot_table(
                 index="District",
                 columns="Indicator",
@@ -78,7 +95,9 @@ class NFHSMortalityService:
             )
 
             metrics: Dict[str, Dict[str, float]] = {}
-            indicator_values: Dict[str, List[float]] = {key: [] for key in indicator_map.keys()}
+            indicator_values: Dict[str, List[float]] = {
+                key: [] for key in indicator_map.keys()
+            }
 
             for district, row in pivot.iterrows():
                 name = str(district).strip()
@@ -89,7 +108,7 @@ class NFHSMortalityService:
                 has_value = False
                 for key, indicator in indicator_map.items():
                     val = row.get(indicator)
-                    if pd.notna(val):
+                    if pandas.notna(val):
                         val_f = float(val)
                         district_metrics[key] = val_f
                         indicator_values[key].append(val_f)
@@ -103,7 +122,7 @@ class NFHSMortalityService:
             self.indicator_stats = {
                 key: {
                     "min": min(values) if values else None,
-                    "max": max(values) if values else None
+                    "max": max(values) if values else None,
                 }
                 for key, values in indicator_values.items()
             }
@@ -118,14 +137,19 @@ class NFHSMortalityService:
         except Exception as e:
             logger.error(f"Failed to load NFHS data: {e}")
 
-    def _normalize(self, value: Optional[float], min_val: Optional[float], max_val: Optional[float]) -> float:
+    def _normalize(
+        self, value: Optional[float], min_val: Optional[float], max_val: Optional[float]
+    ) -> float:
         if value is None or min_val is None or max_val is None:
             return 0.0
         if max_val <= min_val:
             return 0.0
         return float((value - min_val) / (max_val - min_val))
 
-    def get_state_for_district(self, district_name: str, lat: Optional[float], lon: Optional[float]) -> Optional[str]:
+    def get_state_for_district(
+        self, district_name: str, lat: Optional[float], lon: Optional[float]
+    ) -> Optional[str]:
+        self._ensure_loaded()
         if not district_name:
             return None
         direct = self.district_state.get(district_name)
@@ -155,7 +179,8 @@ class NFHSMortalityService:
         if not mapping_path.exists():
             return {}
         try:
-            df = pd.read_csv(mapping_path)
+            pandas = _get_pandas()
+            df = pandas.read_csv(mapping_path)
         except Exception:
             return {}
 
@@ -228,7 +253,9 @@ class NFHSMortalityService:
             final_map[district] = mapped_state
         return final_map
 
-    def _build_reason(self, metrics: Dict[str, Optional[float]], normalized: Dict[str, float]) -> Optional[str]:
+    def _build_reason(
+        self, metrics: Dict[str, Optional[float]], normalized: Dict[str, float]
+    ) -> Optional[str]:
         label_map = {
             "overweight_children_pct": "children overweight",
             "overweight_women_pct": "women overweight/obese",
@@ -280,7 +307,10 @@ class NFHSMortalityService:
 
         return f"Risk factors: {', '.join(parts)}."
 
-    def get_mortality_risk(self, district_name: str, heat_risk: Optional[float]) -> Optional[Dict[str, float]]:
+    def get_mortality_risk(
+        self, district_name: str, heat_risk: Optional[float]
+    ) -> Optional[Dict[str, float]]:
+        self._ensure_loaded()
         if heat_risk is None:
             return None
         metrics = self.district_metrics.get(district_name)
@@ -333,12 +363,16 @@ class NFHSMortalityService:
             if mortality:
                 item.update(mortality)
                 if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-                    available.append({
-                        "lat": float(lat),
-                        "lon": float(lon),
-                        "mortality_risk_score": mortality["mortality_risk_score"],
-                        "mortality_disease_index": mortality["mortality_disease_index"]
-                    })
+                    available.append(
+                        {
+                            "lat": float(lat),
+                            "lon": float(lon),
+                            "mortality_risk_score": mortality["mortality_risk_score"],
+                            "mortality_disease_index": mortality[
+                                "mortality_disease_index"
+                            ],
+                        }
+                    )
             else:
                 missing.append(item)
 
@@ -346,7 +380,9 @@ class NFHSMortalityService:
             return
 
         avg_score = sum(d["mortality_risk_score"] for d in available) / len(available)
-        avg_index = sum(d["mortality_disease_index"] for d in available) / len(available)
+        avg_index = sum(d["mortality_disease_index"] for d in available) / len(
+            available
+        )
 
         def distance(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
             return (a_lat - b_lat) ** 2 + (a_lon - b_lon) ** 2
@@ -357,20 +393,25 @@ class NFHSMortalityService:
             if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
                 neighbors = sorted(
                     available,
-                    key=lambda d: distance(float(lat), float(lon), d["lat"], d["lon"])
+                    key=lambda d: distance(float(lat), float(lon), d["lat"], d["lon"]),
                 )[:5]
                 if neighbors:
-                    item["mortality_risk_score"] = sum(d["mortality_risk_score"] for d in neighbors) / len(neighbors)
-                    item["mortality_disease_index"] = sum(d["mortality_disease_index"] for d in neighbors) / len(neighbors)
-                    item["mortality_risk_reason"] = "Risk factors: averaged from nearby districts."
+                    item["mortality_risk_score"] = sum(
+                        d["mortality_risk_score"] for d in neighbors
+                    ) / len(neighbors)
+                    item["mortality_disease_index"] = sum(
+                        d["mortality_disease_index"] for d in neighbors
+                    ) / len(neighbors)
+                    item["mortality_risk_reason"] = (
+                        "Risk factors: averaged from nearby districts."
+                    )
                     continue
 
             item["mortality_risk_score"] = avg_score
             item["mortality_disease_index"] = avg_index
-            item["mortality_risk_reason"] = "Risk factors: averaged from available districts."
+            item["mortality_risk_reason"] = (
+                "Risk factors: averaged from available districts."
+            )
 
 
 nfhs_service = NFHSMortalityService()
-
-
-

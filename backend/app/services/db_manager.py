@@ -8,14 +8,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class DBManager:
     _instance = None
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(DBManager, cls).__new__(cls)
-            cls._instance.init_db()
+            cls._instance._initialized = False
         return cls._instance
+
+    def _ensure_initialized(self):
+        """Lazy initialize DB on first use."""
+        if not self._initialized:
+            self.init_db()
+            self._initialized = True
 
     def init_db(self):
         self.db_path = get_backend_dir().parent / "district_analytics.db"
@@ -24,7 +31,7 @@ class DBManager:
             cursor = conn.cursor()
 
             # Create table for daily analysis results
-            cursor.execute('''
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS daily_analysis (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     date TEXT NOT NULL,
@@ -42,7 +49,7 @@ class DBManager:
                     pct_vulnerable_social REAL,
                     UNIQUE(date, district_name)
                 )
-            ''')
+            """)
 
             # Migration: ensure lat/lon columns exist for older DBs
             try:
@@ -55,7 +62,7 @@ class DBManager:
                 pass
 
             # Create table for uploaded files metadata
-            cursor.execute('''
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS uploaded_files (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     filename TEXT NOT NULL,
@@ -66,13 +73,15 @@ class DBManager:
                     status TEXT DEFAULT 'Processing',
                     UNIQUE(filename)
                 )
-            ''')
+            """)
 
             # Migration: Ensure status column exists (for existing dbs)
             try:
-                cursor.execute("ALTER TABLE uploaded_files ADD COLUMN status TEXT DEFAULT 'Indexed'")
+                cursor.execute(
+                    "ALTER TABLE uploaded_files ADD COLUMN status TEXT DEFAULT 'Indexed'"
+                )
             except sqlite3.OperationalError:
-                pass # Column exists
+                pass  # Column exists
 
             conn.commit()
             conn.close()
@@ -85,6 +94,7 @@ class DBManager:
 
     def get_results_for_date(self, date_str: str) -> List[Dict]:
         """Fetch all results for a specific date."""
+        self._ensure_initialized()
         try:
             conn = self.get_connection()
             conn.row_factory = sqlite3.Row
@@ -104,6 +114,7 @@ class DBManager:
 
     def get_all_files(self) -> List[Dict]:
         """Fetch all uploaded files metadata."""
+        self._ensure_initialized()
         try:
             conn = self.get_connection()
             conn.row_factory = sqlite3.Row
@@ -123,22 +134,26 @@ class DBManager:
 
     def save_file_metadata(self, data: Dict):
         """Save metadata for an uploaded file."""
+        self._ensure_initialized()
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            cursor.execute('''
+            cursor.execute(
+                """
                 INSERT OR REPLACE INTO uploaded_files (
                     filename, upload_date, size_bytes, content_type, description, status
                 ) VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                data['filename'],
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                data.get('size_bytes', 0),
-                data.get('content_type', 'unknown'),
-                data.get('description', ''),
-                data.get('status', 'Processing')
-            ))
+            """,
+                (
+                    data["filename"],
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    data.get("size_bytes", 0),
+                    data.get("content_type", "unknown"),
+                    data.get("description", ""),
+                    data.get("status", "Processing"),
+                ),
+            )
 
             conn.commit()
             conn.close()
@@ -149,30 +164,34 @@ class DBManager:
 
     def save_result(self, data: Dict):
         """Save a single district analysis result."""
+        self._ensure_initialized()
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            cursor.execute('''
+            cursor.execute(
+                """
                 INSERT OR REPLACE INTO daily_analysis (
                     date, district_name, lat, lon, risk_score, risk_status, heat_index,
                     max_temp, humidity, lst, pct_children, pct_outdoor_workers, pct_vulnerable_social
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                datetime.now().strftime("%Y-%m-%d"),
-                data['district_name'],
-                data.get('lat'),
-                data.get('lon'),
-                data['risk_score'],
-                data['risk_status'],
-                data['heat_index'],
-                data['max_temp'],
-                data['humidity'],
-                data['lst'],
-                data['pct_children'],
-                data['pct_outdoor_workers'],
-                data['pct_vulnerable_social']
-            ))
+            """,
+                (
+                    datetime.now().strftime("%Y-%m-%d"),
+                    data["district_name"],
+                    data.get("lat"),
+                    data.get("lon"),
+                    data["risk_score"],
+                    data["risk_status"],
+                    data["heat_index"],
+                    data["max_temp"],
+                    data["humidity"],
+                    data["lst"],
+                    data["pct_children"],
+                    data["pct_outdoor_workers"],
+                    data["pct_vulnerable_social"],
+                ),
+            )
 
             conn.commit()
             conn.close()
@@ -183,22 +202,26 @@ class DBManager:
     def get_district_history(self, district_name: str, limit: int = 30) -> List[Dict]:
         """Fetch historical data for a district.
 
-    Returns recent rows ordered by date so the UI can show a multi-day trend.
-    Note: we intentionally avoid `GROUP BY date` here because in SQLite it's non-deterministic
-    without aggregates and can collapse history unexpectedly.
+        Returns recent rows ordered by date so the UI can show a multi-day trend.
+        Note: we intentionally avoid `GROUP BY date` here because in SQLite it's non-deterministic
+        without aggregates and can collapse history unexpectedly.
         """
+        self._ensure_initialized()
         try:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            cursor.execute('''
+            cursor.execute(
+                """
         SELECT date, risk_score, heat_index, max_temp, humidity, lst
         FROM daily_analysis
         WHERE district_name = ?
         ORDER BY date DESC, id DESC
         LIMIT ?
-            ''', (district_name, limit))
+            """,
+                (district_name, limit),
+            )
 
             rows = cursor.fetchall()
             conn.close()
@@ -212,10 +235,14 @@ class DBManager:
 
     def update_file_status(self, filename: str, status: str):
         """Update the processing status of a file."""
+        self._ensure_initialized()
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute("UPDATE uploaded_files SET status = ? WHERE filename = ?", (status, filename))
+            cursor.execute(
+                "UPDATE uploaded_files SET status = ? WHERE filename = ?",
+                (status, filename),
+            )
             conn.commit()
             conn.close()
         except Exception as e:
@@ -223,6 +250,7 @@ class DBManager:
 
     def delete_file_metadata(self, filename: str) -> bool:
         """Delete metadata for a file."""
+        self._ensure_initialized()
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -234,5 +262,6 @@ class DBManager:
         except Exception as e:
             logger.error(f"Failed to delete metadata for {filename}: {e}")
             return False
+
 
 db_manager = DBManager()
