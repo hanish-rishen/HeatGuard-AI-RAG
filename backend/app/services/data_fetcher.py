@@ -6,7 +6,6 @@ PURPOSE:
 """
 
 import requests
-import pandas as pd
 import json
 from pathlib import Path
 from typing import Dict, Optional, List
@@ -14,6 +13,19 @@ from datetime import datetime, timedelta
 import logging
 
 from app.core.config import get_backend_dir
+
+# Lazy imports for heavy libraries
+pd = None
+
+
+def _get_pandas():
+    global pd
+    if pd is None:
+        import pandas as _pd
+
+        pd = _pd
+    return pd
+
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +35,7 @@ class DataFetcher:
     Fetches real-time environmental data and static census data for districts.
     """
 
-    _instance: Optional['DataFetcher'] = None
+    _instance: Optional["DataFetcher"] = None
     _initialized: bool = False
 
     def __new__(cls):
@@ -33,12 +45,18 @@ class DataFetcher:
         return cls._instance
 
     def __init__(self):
-        """Initialize the data fetcher."""
+        """Initialize the data fetcher with lazy loading."""
         if not DataFetcher._initialized:
             self.district_coords = {}
+            self._data_loaded = False
+            DataFetcher._initialized = True
+
+    def _ensure_loaded(self):
+        """Lazy load data on first use."""
+        if not self._data_loaded:
             self._load_district_data()
             self._load_district_geocodes()
-            DataFetcher._initialized = True
+            self._data_loaded = True
             logger.info("DataFetcher initialized successfully")
 
     def _load_district_geocodes(self):
@@ -51,7 +69,7 @@ class DataFetcher:
                 logger.error(f"Geocodes not found at {json_path}")
                 return
 
-            with open(json_path, 'r', encoding='utf-8') as f:
+            with open(json_path, "r", encoding="utf-8") as f:
                 geocodes_list = json.load(f)
 
             for item in geocodes_list:
@@ -74,13 +92,27 @@ class DataFetcher:
                     continue
 
             # Manual Fixes for known missing coordinates (Tonk, Theni, Tirunelveli)
-            self.district_coords["Tonk"] = {"lat": 26.1630, "lon": 75.7904} # Tonk, Rajasthan
-            self.district_coords["Theni"] = {"lat": 10.0104, "lon": 77.4768} # Theni, Tamil Nadu
-            self.district_coords["Tirunelveli"] = {"lat": 8.7139, "lon": 77.7567} # Tirunelveli, Tamil Nadu
-            self.district_coords["Tirunelveli " ] = {"lat": 8.7139, "lon": 77.7567} # Try with space just in case
+            self.district_coords["Tonk"] = {
+                "lat": 26.1630,
+                "lon": 75.7904,
+            }  # Tonk, Rajasthan
+            self.district_coords["Theni"] = {
+                "lat": 10.0104,
+                "lon": 77.4768,
+            }  # Theni, Tamil Nadu
+            self.district_coords["Tirunelveli"] = {
+                "lat": 8.7139,
+                "lon": 77.7567,
+            }  # Tirunelveli, Tamil Nadu
+            self.district_coords["Tirunelveli "] = {
+                "lat": 8.7139,
+                "lon": 77.7567,
+            }  # Try with space just in case
 
             # Fast case-insensitive lookup map (used by API layer).
-            self.district_coords_lower = {k.casefold(): k for k in self.district_coords.keys()}
+            self.district_coords_lower = {
+                k.casefold(): k for k in self.district_coords.keys()
+            }
 
             logger.info(f"Loaded coordinates for {len(self.district_coords)} districts")
 
@@ -92,25 +124,35 @@ class DataFetcher:
         try:
             # Navigate to data folder
             backend_dir = get_backend_dir()
-            csv_path = backend_dir.parent / "data" / "heat_health_final_training_set.csv"
+            csv_path = (
+                backend_dir.parent / "data" / "heat_health_final_training_set.csv"
+            )
 
             if not csv_path.exists():
                 logger.error(f"Dataset not found at {csv_path}")
-                self.district_data = pd.DataFrame()
+                self.district_data = _get_pandas().DataFrame()
                 return
 
             # Load CSV
-            df = pd.read_csv(csv_path)
+            pandas = _get_pandas()
+            df = pandas.read_csv(csv_path)
 
             # Get unique district data (census data is constant per district)
-            self.district_data = df.groupby('District').first().reset_index()
-            self.district_data = self.district_data[['District', 'pct_children', 'pct_outdoor_workers', 'pct_vulnerable_social']]
+            self.district_data = df.groupby("District").first().reset_index()
+            self.district_data = self.district_data[
+                [
+                    "District",
+                    "pct_children",
+                    "pct_outdoor_workers",
+                    "pct_vulnerable_social",
+                ]
+            ]
 
             logger.info(f"Loaded census data for {len(self.district_data)} districts")
 
         except Exception as e:
             logger.error(f"Failed to load district data: {e}")
-            self.district_data = pd.DataFrame()
+            self.district_data = _get_pandas().DataFrame()
 
     def get_district_census(self, district_name: str) -> Optional[Dict[str, float]]:
         """
@@ -119,28 +161,36 @@ class DataFetcher:
         Returns:
             Dict with pct_children, pct_outdoor_workers, pct_vulnerable_social
         """
+        self._ensure_loaded()
         if self.district_data.empty:
             return None
 
-        district_row = self.district_data[self.district_data['District'] == district_name]
+        district_row = self.district_data[
+            self.district_data["District"] == district_name
+        ]
 
         if district_row.empty:
             logger.warning(f"District '{district_name}' not found in dataset")
             return None
 
         return {
-            'pct_children': float(district_row.iloc[0]['pct_children']),
-            'pct_outdoor_workers': float(district_row.iloc[0]['pct_outdoor_workers']),
-            'pct_vulnerable_social': float(district_row.iloc[0]['pct_vulnerable_social'])
+            "pct_children": float(district_row.iloc[0]["pct_children"]),
+            "pct_outdoor_workers": float(district_row.iloc[0]["pct_outdoor_workers"]),
+            "pct_vulnerable_social": float(
+                district_row.iloc[0]["pct_vulnerable_social"]
+            ),
         }
 
     def get_all_districts(self) -> List[str]:
         """Get list of all districts in the dataset."""
+        self._ensure_loaded()
         if self.district_data.empty:
             return []
-        return self.district_data['District'].tolist()
+        return self.district_data["District"].tolist()
 
-    def fetch_nasa_weather(self, district_name: str, date: Optional[str] = None) -> Optional[Dict[str, float]]:
+    def fetch_nasa_weather(
+        self, district_name: str, date: Optional[str] = None
+    ) -> Optional[Dict[str, float]]:
         """
         Fetch weather data from NASA POWER API for a specific district.
 
@@ -151,10 +201,13 @@ class DataFetcher:
         Returns:
             Dict with max_temp, humidity, lst (land surface temperature)
         """
+        self._ensure_loaded()
         if district_name in self.district_coords:
             coords = self.district_coords[district_name]
         else:
-            logger.warning(f"Coordinates not available for {district_name}, using default")
+            logger.warning(
+                f"Coordinates not available for {district_name}, using default"
+            )
             # Use a central India coordinate as fallback
             coords = {"lat": 23.0, "lon": 78.0}
 
@@ -180,10 +233,10 @@ class DataFetcher:
                 "latitude": coords["lat"],
                 "longitude": coords["lon"],
                 "daily": "temperature_2m_max,uv_index_max",
-                "current": "relative_humidity_2m,surface_pressure", # Approximation for LST/Humidity
+                "current": "relative_humidity_2m,surface_pressure",  # Approximation for LST/Humidity
                 "timezone": "auto",
                 "start_date": req_date,
-                "end_date": req_date
+                "end_date": req_date,
             }
 
             response = requests.get(url, params=params, timeout=10)
@@ -210,13 +263,13 @@ class DataFetcher:
             lst = max_temp + 2.0 if max_temp else None
 
             if max_temp is None or humidity is None:
-                 logger.error(f"Incomplete data from Open-Meteo for {district_name}")
-                 return None
+                logger.error(f"Incomplete data from Open-Meteo for {district_name}")
+                return None
 
             return {
                 "max_temp": float(max_temp),
                 "humidity": float(humidity),
-                "lst": float(lst)
+                "lst": float(lst),
             }
 
         except Exception as e:

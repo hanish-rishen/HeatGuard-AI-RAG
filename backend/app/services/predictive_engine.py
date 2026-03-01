@@ -9,14 +9,43 @@ PURPOSE: Loads the trained XGBoost model and predicts hospitalization load based
 environmental and demographic data. Implements the Rothfusz Regression for Heat Index.
 """
 
-import joblib
-import numpy as np
-import pandas as pd
 from pathlib import Path
 from typing import Tuple, Optional
 from datetime import datetime
 
 from app.core.config import get_settings, get_backend_dir
+
+# Lazy imports for heavy libraries
+joblib = None
+np = None
+pd = None
+
+
+def _get_joblib():
+    global joblib
+    if joblib is None:
+        import joblib as _joblib
+
+        joblib = _joblib
+    return joblib
+
+
+def _get_numpy():
+    global np
+    if np is None:
+        import numpy as _np
+
+        np = _np
+    return np
+
+
+def _get_pandas():
+    global pd
+    if pd is None:
+        import pandas as _pd
+
+        pd = _pd
+    return pd
 
 
 class PredictiveEngine:
@@ -82,7 +111,7 @@ class PredictiveEngine:
 
         # Step 2: Load XGBoost model
         try:
-            self.model = joblib.load(model_path)
+            self.model = _get_joblib().load(model_path)
             print(f"[PredictiveEngine] Loaded model from {model_path}")
         except Exception as e:
             print(f"[PredictiveEngine] ERROR loading model: {e}")
@@ -95,7 +124,7 @@ class PredictiveEngine:
 
         # Step 3: Load district encoder
         try:
-            self.encoder = joblib.load(encoder_path)
+            self.encoder = _get_joblib().load(encoder_path)
             print(f"[PredictiveEngine] Loaded encoder from {encoder_path}")
             print(
                 f"[PredictiveEngine] Encoder supports {len(self.encoder.classes_)} districts"
@@ -243,7 +272,8 @@ class PredictiveEngine:
         # Training order: Max_Temp, LST, Humidity, Heat_Index,
         #                 pct_children, pct_outdoor_workers, pct_vulnerable_social,
         #                 Month, DayOfYear, District_Encoded
-        features = np.array(
+        numpy = _get_numpy()
+        features = numpy.array(
             [
                 [
                     max_temp,

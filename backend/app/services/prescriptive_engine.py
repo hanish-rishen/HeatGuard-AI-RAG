@@ -9,15 +9,17 @@ using retrieved context and (optionally) an LLM.
 """
 
 import os
-import chromadb
-from chromadb.utils import embedding_functions
-from langchain_mistralai import ChatMistralAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 from typing import List, Dict, Any, Optional
 
 from app.core.config import get_settings
 from app.schemas.models import SourceDocument
+
+# Lazy imports for heavy libraries - imported on first use in _initialize_components
+chromadb = None
+embedding_functions = None
+ChatMistralAI = None
+ChatPromptTemplate = None
+StrOutputParser = None
 
 
 class PrescriptiveEngine:
@@ -65,6 +67,32 @@ class PrescriptiveEngine:
 
     def _initialize_components(self):
         """Initialize ChromaDB and LLM components."""
+        global \
+            chromadb, \
+            embedding_functions, \
+            ChatMistralAI, \
+            ChatPromptTemplate, \
+            StrOutputParser
+
+        # Lazy import heavy libraries
+        if chromadb is None:
+            import chromadb as _chromadb
+            from chromadb.utils import embedding_functions as _embedding_functions
+
+            chromadb = _chromadb
+            embedding_functions = _embedding_functions
+
+        if ChatMistralAI is None:
+            from langchain_mistralai import ChatMistralAI as _ChatMistralAI
+            from langchain_core.prompts import ChatPromptTemplate as _ChatPromptTemplate
+            from langchain_core.output_parsers import (
+                StrOutputParser as _StrOutputParser,
+            )
+
+            ChatMistralAI = _ChatMistralAI
+            ChatPromptTemplate = _ChatPromptTemplate
+            StrOutputParser = _StrOutputParser
+
         try:
             # 1. Setup ChromaDB (Local Persistent)
             persist_dir = self.settings.chroma_persist_dir
