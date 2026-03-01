@@ -23,7 +23,6 @@ import logging
 import json
 import asyncio
 import io
-import numpy as np
 from typing import List
 from fastapi.responses import StreamingResponse
 import hashlib

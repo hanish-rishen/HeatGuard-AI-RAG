@@ -8,12 +8,6 @@ PURPOSE: Configures the ASGI application, middleware (CORS), and startup events.
 
 import os
 
-# Hack to fix WinError 1114 with Torch/Numpy on Windows
-try:
-    import torch
-except ImportError:
-    pass
-
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
