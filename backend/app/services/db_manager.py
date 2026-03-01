@@ -25,30 +25,9 @@ class DBManager:
             self._initialized = True
 
     def init_db(self):
-        # Try multiple locations for container compatibility
-        possible_paths = [
-            get_backend_dir() / "district_analytics.db",
-            Path("/tmp") / "district_analytics.db",
-            Path.cwd() / "district_analytics.db",
-        ]
-
-        for db_path in possible_paths:
-            try:
-                logger.info(f"Trying to create database at: {db_path}")
-                # Ensure parent directory exists
-                db_path.parent.mkdir(parents=True, exist_ok=True)
-                # Test if we can create the file
-                conn = sqlite3.connect(db_path)
-                conn.close()
-                self.db_path = db_path
-                logger.info(f"Successfully using database at: {db_path}")
-                break
-            except Exception as e:
-                logger.warning(f"Failed to use {db_path}: {e}")
-                continue
-        else:
-            logger.error("Could not initialize database at any location")
-            return
+        # Use /tmp for container environments (guaranteed writable)
+        self.db_path = Path("/tmp") / "district_analytics.db"
+        logger.info(f"Using database at: {self.db_path}")
 
         try:
             conn = sqlite3.connect(self.db_path)
