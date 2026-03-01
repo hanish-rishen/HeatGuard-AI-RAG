@@ -37,7 +37,7 @@ class PredictiveEngine:
     - Geographic: District_Encoded
     """
 
-    _instance: Optional['PredictiveEngine'] = None
+    _instance: Optional["PredictiveEngine"] = None
     _initialized: bool = False
 
     def __new__(cls):
@@ -54,8 +54,14 @@ class PredictiveEngine:
         self.model = None
         self.encoder = None
         self.settings = get_settings()
-        self._load_models()
+        self._models_loaded = False
         PredictiveEngine._initialized = True
+
+    def _ensure_loaded(self):
+        """Lazy load models on first use."""
+        if not self._models_loaded:
+            self._load_models()
+            self._models_loaded = True
 
     def _load_models(self) -> None:
         """
@@ -91,7 +97,9 @@ class PredictiveEngine:
         try:
             self.encoder = joblib.load(encoder_path)
             print(f"[PredictiveEngine] Loaded encoder from {encoder_path}")
-            print(f"[PredictiveEngine] Encoder supports {len(self.encoder.classes_)} districts")
+            print(
+                f"[PredictiveEngine] Encoder supports {len(self.encoder.classes_)} districts"
+            )
         except Exception as e:
             print(f"[PredictiveEngine] ERROR loading encoder: {e}")
             self.model = None
@@ -118,7 +126,7 @@ class PredictiveEngine:
             Heat Index in Celsius
         """
         # Step 1: Convert Celsius to Fahrenheit (Rothfusz uses Fahrenheit)
-        T = (temperature_c * 9/5) + 32
+        T = (temperature_c * 9 / 5) + 32
         RH = humidity
 
         # Step 2: Rothfusz Regression coefficients
@@ -133,12 +141,20 @@ class PredictiveEngine:
         c9 = -1.99e-6
 
         # Step 3: Calculate Heat Index in Fahrenheit
-        HI_F = (c1 + (c2 * T) + (c3 * RH) + (c4 * T * RH) +
-                (c5 * T**2) + (c6 * RH**2) + (c7 * T**2 * RH) +
-                (c8 * T * RH**2) + (c9 * T**2 * RH**2))
+        HI_F = (
+            c1
+            + (c2 * T)
+            + (c3 * RH)
+            + (c4 * T * RH)
+            + (c5 * T**2)
+            + (c6 * RH**2)
+            + (c7 * T**2 * RH)
+            + (c8 * T * RH**2)
+            + (c9 * T**2 * RH**2)
+        )
 
         # Step 4: Convert back to Celsius
-        HI_C = (HI_F - 32) * 5/9
+        HI_C = (HI_F - 32) * 5 / 9
 
         return round(HI_C, 2)
 
@@ -155,11 +171,14 @@ class PredictiveEngine:
         Returns:
             Encoded integer, or 0 if district not found
         """
+        self._ensure_loaded()
         try:
             return self.encoder.transform([district_name])[0]
         except ValueError:
             # District not in encoder - return default
-            print(f"[PredictiveEngine] WARNING: District '{district_name}' not found, using default encoding")
+            print(
+                f"[PredictiveEngine] WARNING: District '{district_name}' not found, using default encoding"
+            )
             return 0
 
     def predict(
@@ -171,7 +190,7 @@ class PredictiveEngine:
         pct_children: float,
         pct_outdoor_workers: float,
         pct_vulnerable_social: float,
-        date_str: str
+        date_str: str,
     ) -> Tuple[float, float]:
         """
         PURPOSE: Predict hospitalization load for a district.
@@ -203,6 +222,7 @@ class PredictiveEngine:
         Returns:
             Tuple of (predicted_hospitalization_load, heat_index)
         """
+        self._ensure_loaded()
         if not self.is_loaded():
             raise RuntimeError(
                 "Predictive model artifacts are not loaded. "
@@ -223,18 +243,22 @@ class PredictiveEngine:
         # Training order: Max_Temp, LST, Humidity, Heat_Index,
         #                 pct_children, pct_outdoor_workers, pct_vulnerable_social,
         #                 Month, DayOfYear, District_Encoded
-        features = np.array([[
-            max_temp,
-            lst,
-            humidity,
-            heat_index,
-            pct_children,
-            pct_outdoor_workers,
-            pct_vulnerable_social,
-            month,
-            day_of_year,
-            district_encoded
-        ]])
+        features = np.array(
+            [
+                [
+                    max_temp,
+                    lst,
+                    humidity,
+                    heat_index,
+                    pct_children,
+                    pct_outdoor_workers,
+                    pct_vulnerable_social,
+                    month,
+                    day_of_year,
+                    district_encoded,
+                ]
+            ]
+        )
 
         # Step 5: Run prediction
         prediction = self.model.predict(features)[0]
@@ -246,10 +270,12 @@ class PredictiveEngine:
 
     def is_loaded(self) -> bool:
         """Check if models are successfully loaded."""
+        self._ensure_loaded()
         return self.model is not None and self.encoder is not None
 
     def get_supported_districts(self) -> list:
         """Return list of all 640 supported district names."""
+        self._ensure_loaded()
         if self.encoder is not None:
             return list(self.encoder.classes_)
         return []
