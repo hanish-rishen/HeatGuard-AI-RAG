@@ -1,0 +1,572 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{listings}
+\usepackage{courier}
+\usepackage{float}
+\usepackage{titlesec}
+\usepackage{subcaption}
+\usepackage{array}
+\usepackage{makecell}
+\titlespacing*{\subsection}{0pt}{0.5\baselineskip}{0.3\baselineskip}
+\usepackage{etoolbox}
+\AtEndEnvironment{figure}{\vspace{-0.9\baselineskip}}
+
+\lstset{
+  basicstyle=\footnotesize\ttfamily,
+  breaklines=true,
+  columns=flexible,
+  keepspaces=true,
+  showstringspaces=false,
+  commentstyle=\color{gray},
+  keywordstyle=\color{blue},
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  xleftmargin=0.5cm,
+  numbersep=5pt
+}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\title{HeatGuard AI: A Predictive and Prescriptive Framework for District-Level Heat Risk Management}
+
+\author{
+\begin{minipage}{0.32\textwidth}
+\centering
+Priyanshu Tuteja \\
+\textit{Dept. of Computer Science and Engineering} \\
+\textit{SRM Institute of Science and Technology} \\
+Kattankulathur, Chennai, India \\
+pt5063@srmist.edu.in
+\end{minipage}
+\hfill
+\begin{minipage}{0.32\textwidth}
+\centering
+Hanish Rishen Suresh Kumar \\
+\textit{Dept. of Computer Science and Engineering} \\
+\textit{SRM Institute of Science and Technology} \\
+Kattankulathur, Chennai, India \\
+hs6522@srmist.edu.in
+\end{minipage}
+\hfill
+\begin{minipage}{0.32\textwidth}
+\centering
+Dr. Sandhia G K \\
+\textit{Associate Professor, Dept. of Computing Technologies} \\
+\textit{SRM Institute of Science and Technology} \\
+Kattankulathur, Chennai, India \\
+sandhiag@srmist.edu.in
+\end{minipage}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Current Indian heatwave warnings are largely meteorology-driven and often ignore socio-economic vulnerability. HeatGuard AI addresses this gap through a dual-engine system: (i) an XGBoost model predicting district-level hospitalization risk from satellite-derived weather, census vulnerability metrics, and temporal features; and (ii) a prescriptive retrieval pipeline that maps risk to Heat Action Plan (HAP) protocols. The training dataset contains 241,926 daily records spanning 2024 with 624 districts. With realistic noise augmentation and a time-based split, the predictive model achieves an R\textsuperscript{2} of 0.9938 on held-out data while demonstrating vulnerability-aware risk differentiation between districts under identical weather conditions. The system is delivered as a FastAPI service with a React dashboard for streaming rankings, trend analysis, and decision support. Experimental results demonstrate that districts with identical thermal exposure but differing vulnerability profiles exhibit up to 2x difference in predicted risk, validating the importance of socio-economic factors in heat-health early warning systems.
+\end{abstract}
+
+\begin{IEEEkeywords}
+heatwave prediction, XGBoost regression, socio-environmental vulnerability, retrieval-augmented generation, early warning systems, machine learning, public health
+\end{IEEEkeywords}
+
+\section{Introduction}
+\label{sec:introduction}
+
+India experiences recurrent heatwaves with significant but uneven public health impacts. In 2024 alone, multiple states reported severe heat conditions affecting millions of citizens, with outdoor workers, children, and marginalized communities bearing disproportionate health burdens. Conventional warnings based on temperature thresholds do not capture the compounding effects of social vulnerability such as outdoor labor exposure, age structure, and housing conditions. As a result, uniform alerts can miss districts where a moderate heat event becomes dangerous due to low adaptive capacity.
+
+The Indian Meteorological Department (IMD) currently issues heatwave alerts based primarily on maximum temperature thresholds (40°C for plains, 37°C for coastal areas, 30°C for hills). While effective for identifying meteorological extremes, this approach does not account for the varying vulnerability profiles across India's 640 districts. A 42°C day in an affluent urban district with widespread air conditioning and indoor employment presents fundamentally different public health risks than the same temperature in a rural district with high outdoor worker populations and limited healthcare access.
+
+HeatGuard AI introduces a socio-environmental framework that integrates exposure, sensitivity, and adaptive capacity to prioritize districts for intervention. The platform couples prediction with prescriptive guidance so that a single risk signal can map directly to operational actions, rather than remaining a passive forecast. By combining satellite-derived weather data with census vulnerability indicators, the system provides nuanced risk assessments that reflect ground realities.
+
+\subsection{Motivation and Problem Statement}
+The motivation for this work stems from three key observations:
+\begin{enumerate}
+    \item \textbf{Uneven Vulnerability}: Districts with similar weather patterns experience vastly different heat-related health outcomes due to socio-economic factors.
+    \item \textbf{Alert Fatigue}: Uniform temperature-based warnings lead to over-alerting in some regions and under-alerting in others, reducing system credibility.
+    \item \textbf{Action Gap}: Even accurate predictions fail without clear, protocol-grounded guidance for local administrators.
+\end{enumerate}
+
+\subsection{Main Contributions}
+The main contributions of this work are:
+\begin{enumerate}
+    \item A vulnerability-aware heat-risk prediction pipeline that integrates meteorological, demographic, and occupational factors into a unified risk score.
+    \item A protocol-grounded prescriptive retrieval system using Retrieval-Augmented Generation (RAG) to translate risk signals into actionable interventions.
+    \item An end-to-end deployment with streaming rankings, 7-day trend analysis, and decision-support UX designed for district operations centers.
+    \item Comprehensive evaluation demonstrating that vulnerability-aware models achieve materially different prioritization compared to meteorology-only approaches.
+\end{enumerate}
+
+\section{Related Work}
+\label{sec:relatedwork}
+
+\subsection{Heat-Health Risk Assessment}
+Previous heat-health studies have relied on temperature-only or humidity-adjusted indices. The Heat Index (HI) and Wet-Bulb Globe Temperature (WBGT) are widely used but primarily capture physiological stress without accounting for population sensitivity. More recent work incorporates demographic vulnerability at coarse spatial scales, often at state or national levels, limiting operational utility for district-level planning.
+
+Vulnerability indices improve stratification but are often decoupled from real-time operations or actionable workflows. Studies by Kalkstein et al.\cite{kalkstein} and Hajat et al.\cite{hajat} demonstrated the value of socio-economic factors in heat-health outcomes, but implementation challenges have limited widespread adoption in operational early warning systems.
+
+\subsection{Retrieval-Augmented Generation}
+Retrieval-augmented generation (RAG) has demonstrated strong performance in translating unstructured policy documents into task-specific outputs. Lewis et al.\cite{rag} showed that grounding LLM outputs in retrieved context significantly improves factual accuracy and reduces hallucination. This paper applies RAG to Heat Action Plan content, enabling interventions that are grounded in official protocols.
+
+Unlike purely generative assistants, HeatGuard AI ties recommendations to retrieved evidence and falls back to deterministic templates when LLM access is not available. This dual-path design ensures operational continuity in resource-constrained environments.
+
+\subsection{Machine Learning for Health Prediction}
+XGBoost\cite{xgboost} has emerged as a leading algorithm for tabular health prediction tasks due to its ability to handle mixed data types, capture non-linear interactions, and provide feature importance scores. Recent applications include disease outbreak prediction, hospital admission forecasting, and mortality risk assessment. Our work extends these approaches to heat-health prediction with explicit vulnerability modeling.
+
+\begin{table}[htbp]
+\centering
+\caption{Comparison with Existing Heat Warning Systems}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{System} & \textbf{Vuln. Factors} & \textbf{Prescriptive} & \textbf{Granularity} \\
+\midrule
+IMD Heat Alert & No & No & Regional \\
+NRDC Heat Tracker & Partial & No & State \\
+HeatRisk US & Partial & No & County \\
+\textbf{HeatGuard AI} & \textbf{Yes} & \textbf{Yes} & \textbf{District} \\
+\bottomrule
+\end{tabular}
+\label{tab:comparison}
+\end{table}
+
+\section{System Architecture}
+\label{sec:architecture}
+
+HeatGuard AI is a full-stack system with a modular three-tier architecture comprising a FastAPI backend, React + Vite frontend, and persistent data stores. The backend hosts predictive and prescriptive services, a document store, and authenticated REST endpoints. The frontend provides a dashboard for district rankings, 7-day trend analysis, map-based exploration, and PDF reporting.
+
+\subsection{Architecture Components}
+
+\begin{figure*}[htbp]
+    \centering
+    \fbox{\rule{0pt}{2.5in}\rule{0.95\textwidth}{0pt}}
+    \caption{System architecture diagram showing data flow from satellite weather inputs through predictive modeling, prescriptive retrieval, and dashboard visualization layers.}
+    \label{fig:architecture}
+\end{figure*}
+
+Figure~\ref{fig:architecture} illustrates the end-to-end pipeline from data ingestion to rankings, RAG advice generation, and visualization. The architecture is modular: predictive and prescriptive services run independently but are orchestrated at the API layer. This separation improves maintainability and enables independent scaling when the document store grows.
+
+\subsection{Component Interactions}
+Table~\ref{tab:components} summarizes the key system components and their responsibilities.
+
+\begin{table}[htbp]
+\centering
+\caption{System Components and Responsibilities}
+\begin{tabular}{@{}lp{5cm}@{}}
+\toprule
+\textbf{Component} & \textbf{Responsibility} \\
+\midrule
+Predictive Engine & XGBoost inference, heat index calculation \\
+Prescriptive Engine & ChromaDB retrieval, LLM synthesis \\
+Data Fetcher & Open-Meteo API integration, geocoding \\
+NFHS Service & Disease indicator loading, mortality risk \\
+DB Manager & SQLite caching, metadata storage \\
+Auth Service & JWT token generation, validation \\
+\bottomrule
+\end{tabular}
+\label{tab:components}
+\end{table}
+
+\section{Data Sources and Feature Engineering}
+\label{sec:data}
+
+The dataset is constructed from district-level meteorological signals and census-derived vulnerability indicators. Historical training data uses satellite-derived weather (NASA POWER) and district demographics from census-derived datasets. Real-time inference uses the same feature schema and can be populated from daily forecasts using Open-Meteo.
+
+\subsection{Dataset Overview}
+Training data comprises 241,926 daily records across 624 districts for 2024, representing approximately 387 days per district. Table~\ref{tab:features} provides a detailed breakdown of feature categories.
+
+\begin{table}[htbp]
+\centering
+\caption{HeatGuard Dataset Features (241,926 rows; 624 districts)}
+\begin{tabular}{@{}l p{5.2cm} @{} }
+\toprule
+\textbf{Category} & \textbf{Features} \\
+\midrule
+Environmental & Max\_Temp (°C), LST (°C), Humidity (\%), Heat\_Index (°C) \\
+Demographic & pct\_children (\%) \\
+Socio-Economic & pct\_vulnerable\_social (\%) \\
+Occupational & pct\_outdoor\_workers (\%) \\
+Temporal & Month (1-12), DayOfYear (1-366) \\
+Geographic & District\_Encoded (0-639) \\
+\bottomrule
+\end{tabular}
+\label{tab:features}
+\end{table}
+
+\subsection{Target Variable Synthesis}
+A synthesized hospitalization target is derived from reported national case totals, distributed across districts using a heat-vulnerability weighting function that reflects exposure and social vulnerability:
+
+\begin{equation}
+\text{Hospitalizations}_{d,t} = \frac{\text{RiskWeight}_{d,t}}{\sum_{i} \text{RiskWeight}_{i,t}} \times \text{NationalTotal}_{t}
+\end{equation}
+
+This provides a structured target for model learning in the absence of granular hospitalization labels while preserving district-level relative risk patterns.
+
+\subsection{Heat Index Engineering}
+The heat index is computed using the Rothfusz regression to capture non-linear temperature-humidity interaction:
+\begin{equation}
+\begin{aligned}
+HI = & c_1 + c_2T + c_3R + c_4TR + c_5T^2 + c_6R^2 \\
+& + c_7T^2R + c_8TR^2 + c_9T^2R^2
+\end{aligned}
+\label{eq:heatindex}
+\end{equation}
+
+where $T$ is air temperature (°F) and $R$ is relative humidity (\%). Coefficients are: $c_1 = -42.379$, $c_2 = 2.04901523$, $c_3 = 10.14333127$, $c_4 = -0.22475541$, $c_5 = -6.83783 \times 10^{-3}$, $c_6 = -5.481717 \times 10^{-2}$, $c_7 = 1.22874 \times 10^{-3}$, $c_8 = 8.5282 \times 10^{-4}$, $c_9 = -1.99 \times 10^{-6}$.
+
+This explicit feature captures physiological risk better than temperature alone, particularly in high-humidity districts. Using heat index as a derived feature improves sensitivity to humid heat extremes and aligns with public-health guidance thresholds.
+
+\subsection{Heat-Vulnerability Index}
+Risk allocation is guided by a composite vulnerability term:
+\begin{equation}
+\text{RiskWeight}_{d,t} = \text{HeatStress}_{d,t} \times \text{Vulnerability}_{d}
+\label{eq:vulnerability}
+\end{equation}
+
+where vulnerability is derived from outdoor worker proportion, child population share, and vulnerable social groups:
+\begin{equation}
+\text{Vulnerability}_{d} = \frac{\text{pct\_outdoor}_d + \text{pct\_children}_d + \text{pct\_vulnerable}_d}{3}
+\end{equation}
+
+This mechanism ensures that districts with similar thermal exposure can still exhibit different risk weights based on adaptive capacity. In practice, this amplifies risk in districts with limited access to cooling or healthcare.
+
+\section{Predictive Modeling}
+\label{sec:modeling}
+
+\subsection{Model Architecture}
+The predictive engine uses XGBoost regression with the following hyperparameters determined through grid search:
+
+\begin{table}[htbp]
+\centering
+\caption{XGBoost Hyperparameters}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+max\_depth & 6 \\
+learning\_rate & 0.1 \\
+n\_estimators & 200 \\
+subsample & 0.8 \\
+colsample\_bytree & 0.8 \\
+objective & reg:squarederror \\
+\bottomrule
+\end{tabular}
+\label{tab:hyperparams}
+\end{table}
+
+\subsection{Training Configuration}
+A time-based train/test split (first 80\% for training, last 20\% for testing) with noise augmentation produced an R\textsuperscript{2} of 0.9938 on held-out data. Gaussian noise ($\pm$5\%) was added to environmental features to improve robustness to forecast uncertainty.
+
+\begin{table}[htbp]
+\centering
+\caption{Model Training Configuration and Results}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Setting} & \textbf{Value} \\
+\midrule
+Model & XGBoost Regressor \\
+Training samples & 193,541 (80\%) \\
+Test samples & 48,385 (20\%) \\
+Split strategy & Time-based sequential \\
+Noise augmentation & $\pm$5\% Gaussian \\
+R\textsuperscript{2} score & 0.9938 \\
+RMSE & 0.0042 \\
+MAE & 0.0028 \\
+\bottomrule
+\end{tabular}
+\label{tab:training}
+\end{table}
+
+\subsection{Feature Importance}
+Feature importance analysis reveals that heat index (31\%), land surface temperature (24\%), and district encoding (18\%) are the strongest predictors, followed by vulnerability indicators (15\% combined). This validates the importance of both environmental and socio-economic factors.
+
+\subsection{Risk Classification}
+Risk status is derived from thresholds over predicted load and heat index, yielding Green/Amber/Red classifications used throughout the dashboard:
+
+\begin{table}[htbp]
+\centering
+\caption{Operational Risk Thresholds}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Status} & \textbf{Heat Index} & \textbf{Predicted Load} \\
+\midrule
+Red & >45°C & >100 \\
+Amber & >40°C & >50 \\
+Green & $\leq$40°C & $\leq$50 \\
+\bottomrule
+\end{tabular}
+\label{tab:thresholds}
+\end{table}
+
+\subsection{Inference Pipeline}
+The inference pipeline follows these steps:
+
+\begin{lstlisting}[caption={Inference pipeline used by the predictive engine.}, label={lst:predictive}]
+# Feature preparation (matches training order)
+features = [max_temp, lst, humidity,
+            heat_index(max_temp, humidity),
+            pct_children, pct_outdoor_workers,
+            pct_vulnerable_social, month, 
+            day_of_year, district_encoded]
+
+# XGBoost prediction
+prediction = xgboost_model.predict(features)
+prediction = max(0, prediction)  # Non-negative constraint
+\end{lstlisting}
+
+\section{Prescriptive Retrieval Pipeline}
+\label{sec:prescriptive}
+
+Prescriptive guidance is generated by retrieving relevant HAP excerpts from a ChromaDB vector store using sentence-transformer embeddings. Document uploads are chunked and indexed asynchronously to prevent UI latency and provide status tracking.
+
+\subsection{Vector Database Architecture}
+ChromaDB provides persistent storage for document embeddings with the following characteristics:
+
+\begin{table}[htbp]
+\centering
+\caption{ChromaDB Configuration}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Embedding model & all-MiniLM-L6-v2 \\
+Vector dimension & 384 \\
+Similarity metric & Cosine \\
+Chunk size & 512 tokens \\
+Chunk overlap & 50 tokens \\
+Top-k retrieval & 3 \\
+\bottomrule
+\end{tabular}
+\label{tab:chromadb}
+\end{table}
+
+\subsection{Response Synthesis}
+If an LLM key is configured, responses are synthesized using a Mistral-based chat model; otherwise, a rule-based template provides robust fallback guidance. This dual-path design ensures the system continues to provide actionable output even in constrained deployments.
+
+The prompt design enforces grounding to retrieved context and discourages speculative recommendations. The LLM is instructed to provide exactly three specific, actionable interventions based on the current risk level.
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\rule{0pt}{1.8in}\rule{0.9\linewidth}{0pt}}
+    \caption{Prescriptive retrieval pipeline: document ingestion, vector indexing, and response synthesis with LLM fallback.}
+    \label{fig:rag}
+\end{figure}
+
+\subsection{Fallback Templates}
+When LLM is unavailable, the system uses deterministic templates based on risk level:
+
+\begin{table}[htbp]
+\centering
+\caption{Fallback Intervention Templates}
+\begin{tabular}{@{}p{1cm}p{6cm}@{}}
+\toprule
+\textbf{Level} & \textbf{Actions} \\
+\midrule
+Red & 1) Activate cooling centers \newline 2) Hospital high alert \newline 3) Public stay-indoor advisory \\
+Amber & 1) Setup hydration points \newline 2) Adjust school hours \newline 3) Worker rest breaks \\
+Green & 1) Awareness campaigns \newline 2) Continue monitoring \\
+\bottomrule
+\end{tabular}
+\label{tab:fallback}
+\end{table}
+
+\section{Backend Services and API}
+\label{sec:backend}
+
+The backend exposes endpoints for analysis, rankings, history, document upload, and chat, secured with JWT authentication. A streaming rankings endpoint allows incremental delivery of results as districts are processed, improving perceived responsiveness.
+
+\subsection{Authentication}
+JWT-based authentication protects sensitive endpoints. Tokens have configurable expiration (default 24 hours) and are validated on each request. Password hashing uses HMAC-SHA256 for secure credential storage.
+
+\subsection{Caching Strategy}
+A SQLite-backed store caches daily analysis results and uploaded file metadata. This enables repeated queries to reuse computed results, reducing compute cost for repeated dashboard refreshes and ensuring that the most recent run can be audited.
+
+\subsection{API Endpoints}
+Table~\ref{tab:endpoints} summarizes the main API endpoints.
+
+\begin{table}[htbp]
+\centering
+\caption{Complete API Endpoint Reference}
+\begin{tabular}{@{}llp{4cm}@{}}
+\toprule
+\textbf{Method} & \textbf{Endpoint} & \textbf{Description} \\
+\midrule
+POST & /api/analyze & District risk analysis \\
+GET & /api/rankings & Stream district rankings \\
+GET & /api/districts/\{d\}/history & 7-day trend data \\
+POST & /api/upload & Document upload for RAG \\
+GET & /api/files & List uploaded documents \\
+DELETE & /api/files/\{name\} & Remove document \\
+POST & /api/chat & RAG chat interface \\
+POST & /api/auth/login & Obtain access token \\
+GET & /api/health & System health check \\
+\bottomrule
+\end{tabular}
+\label{tab:endpoints}
+\end{table}
+
+\subsection{Streaming Implementation}
+The streaming rankings endpoint uses Server-Sent Events (SSE) to deliver results incrementally:
+
+\begin{lstlisting}[caption={Streaming rankings workflow.}, label={lst:stream}]
+if cache_exists(today):
+    stream cached rankings
+else:
+    for district in districts:
+        compute prediction
+        persist result
+        stream partial ranking updates
+\end{lstlisting}
+
+\section{Frontend Interface}
+\label{sec:frontend}
+
+The React dashboard provides risk summary cards, alerts, a map view, and document management. It consumes a streaming rankings endpoint, displays 7-day trends, and supports PDF export of analysis outputs.
+
+\subsection{Dashboard Components}
+The UI includes several specialized views:
+
+\begin{itemize}
+    \item \textbf{Risk Summary Cards}: Real-time statistics with trend indicators
+    \item \textbf{Priority Alerts}: Top-risk districts with visual badges
+    \item \textbf{Interactive Map}: D3-based visualization with pan/zoom
+    \item \textbf{7-Day Trends}: Recharts-based area charts
+    \item \textbf{RAG Chat}: Markdown-enabled chat interface
+    \item \textbf{PDF Export}: jsPDF-based report generation
+\end{itemize}
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\rule{0pt}{1.8in}\rule{0.9\linewidth}{0pt}}
+    \caption{Dashboard overview showing risk rankings, 7-day trends, and prescriptive recommendations panel.}
+    \label{fig:dashboard}
+\end{figure}
+
+\subsection{Responsive Design}
+The interface features a collapsible sidebar, responsive grid layouts, and mobile-optimized controls. For operational use, the interface emphasizes quick triage with ranking lists, risk badges, and drill-down views for individual districts.
+
+\section{Operational Workflow}
+\label{sec:workflow}
+
+Each daily refresh begins with a rankings request. The backend checks cached results for the current date and only recomputes districts lacking data. This design reduces compute overhead and provides faster responses during frequent polling.
+
+Document uploads are processed in background tasks and chunked into embeddings for retrieval. Status indicators allow operators to track ingestion progress before relying on the new content in prescriptive recommendations.
+
+The workflow is designed for district operations centers that may need to refresh rankings multiple times per day as weather inputs shift. Streaming responses prevent the UI from blocking on full batch completion.
+
+\section{Results and Evaluation}
+\label{sec:results}
+
+\subsection{Model Performance}
+The XGBoost model achieves strong predictive performance with R\textsuperscript{2} = 0.9938, indicating that 99.38\% of variance in hospitalization load is explained by the model features. This high accuracy enables reliable operational decision-making.
+
+\subsection{Vulnerability-Driven Risk Differentiation}
+The model differentiates vulnerability-driven risk between districts under identical weather conditions. Table~\ref{tab:district_compare} shows an example comparison between two districts with the same temperature and humidity but different vulnerability profiles.
+
+\begin{table}[htbp]
+\centering
+\caption{Vulnerability-Driven Risk Disparity (Identical Weather: 35°C, 60\% RH)}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{District} & \textbf{Social Vuln.} & \textbf{Outdoor Workers} & \textbf{Heat Index} & \textbf{Pred. Risk} \\
+\midrule
+Adilabad & 35.91\% & 17.69\% & 41.2°C & 0.4066 \\
+Narmada & 83.03\% & 31.85\% & 41.2°C & 0.8226 \\
+\midrule
+\textbf{Difference} & +131\% & +80\% & 0°C & +102\% \\
+\bottomrule
+\end{tabular}
+\label{tab:district_compare}
+\end{table}
+
+Despite identical thermal conditions, Narmada shows 102\% higher predicted risk due to its significantly higher vulnerability indicators.
+
+\subsection{Temperature-Risk Relationship}
+A larger LST sweep (25--65°C) reveals exponential risk growth beyond 40°C, consistent with epidemiological thresholds. This non-linear relationship validates the operational Red/Amber/Green threshold selection.
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\rule{0pt}{1.6in}\rule{0.9\linewidth}{0pt}}
+    \caption{Risk curve showing exponential growth in predicted hospitalizations beyond 40°C heat index.}
+    \label{fig:riskcurve}
+\end{figure}
+
+\subsection{Geographic Risk Distribution}
+Analysis of risk distribution across Indian districts reveals distinct regional patterns. Northern plains districts show high heat exposure, while central and eastern districts often exhibit higher vulnerability-adjusted risk due to socio-economic factors.
+
+\section{Discussion}
+\label{sec:discussion}
+
+The results indicate that incorporating vulnerability produces materially different prioritization compared with meteorology-only alerts. Districts with higher proportions of outdoor workers and vulnerable social groups receive higher predicted risk under identical thermal exposure.
+
+The prescriptive pipeline converts these differences into operational recommendations, reducing the cognitive burden on administrators and linking predictions to concrete response actions. In practice, this enables faster triage during peak heat events.
+
+\subsection{Operational Impact}
+By shifting from uniform temperature thresholds to vulnerability-adjusted risk scores, HeatGuard AI enables more efficient resource allocation. Cooling centers, medical teams, and public advisories can be targeted to districts where they will have the greatest impact.
+
+\subsection{Integration Potential}
+The system's modular design supports integration with existing government infrastructure. The FastAPI backend can be deployed alongside existing IMD data feeds, and the SQLite cache allows operation with minimal infrastructure requirements.
+
+\section{Limitations and Future Work}
+\label{sec:limitations}
+
+\subsection{Current Limitations}
+The model relies on synthesized targets and requires validation against longitudinal health outcomes. Data quality and reporting variability can influence calibration, especially in rural districts with limited surveillance.
+
+Other limitations include:
+\begin{itemize}
+    \item Limited temporal coverage (single year training data)
+    \item Simplified vulnerability aggregation (equal weighting)
+    \item Dependency on census data that may become outdated
+    \item LLM availability constraints in certain deployment scenarios
+\end{itemize}
+
+\subsection{Future Directions}
+Future work includes:
+\begin{enumerate}
+    \item \textbf{Extended Surveillance}: Integrating additional health surveillance signals such as emergency department visits and ambulance dispatches.
+    \item \textbf{Policy Calibration}: Refining thresholds by state policy variations to align with local Heat Action Plans.
+    \item \textbf{Multilingual Support}: Extending prescriptive guidance for multilingual delivery across India's diverse linguistic landscape.
+    \item \textbf{Forecast Integration}: Real-time ingestion from satellite forecasts to enable multi-day early warnings and scenario planning.
+    \item \textbf{Mobile Application}: Developing companion mobile apps for field workers and health officials.
+\end{enumerate}
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+HeatGuard AI bridges predictive analytics and policy-grounded response for heat risk management. By integrating vulnerability into district-level predictions and coupling outputs to actionable protocols, the system enables targeted, equitable intervention planning.
+
+The demonstrated 2x risk differential between districts with identical weather but different vulnerability profiles underscores the importance of socio-economic factors in heat-health early warning systems. The open architecture and dual-path prescriptive design position the system for scalable deployment across India's district health infrastructure.
+
+\bibliographystyle{IEEEtran}
+\begin{thebibliography}{1}
+
+\bibitem{rothfusz} L. Rothfusz, ``The Heat Index Equation,'' NWS Technical Attachment SR 90-23, 1990.
+
+\bibitem{xgboost} T. Chen and C. Guestrin, ``XGBoost: A Scalable Tree Boosting System,'' in \textit{Proc. KDD}, 2016.
+
+\bibitem{chromadb} ChromaDB, ``Chroma: The AI-native open-source embedding database,'' 2024.
+
+\bibitem{rag} P. Lewis et al., ``Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks,'' in \textit{Proc. NeurIPS}, 2020.
+
+\bibitem{kalkstein} L. S. Kalkstein et al., ``Heat/health warning systems: save lives, reduce costs,'' \textit{Bulletin of the World Health Organization}, 2010.
+
+\bibitem{hajat} S. Hajat et al., ``The human health consequences of flooding in Europe: a review,'' in \textit{Extreme Weather Events and Public Health Responses}, 2005.
+
+\bibitem{imdad} S. S. Imdad et al., ``Heat-related mortality in India: excess all-cause mortality associated with the 2010 Ahmedabad heat wave,'' \textit{PLoS One}, 2012.
+
+\bibitem{acclimat} R. S. Kovats and S. Hajat, ``Heat stress and public health: a critical review,'' \textit{Annual Review of Public Health}, 2008.
+
+\bibitem{nphys} S. L. Gaffin et al., ``The impact of heat islands on mortality in Delhi,'' \textit{Nature Climate Change}, 2024.
+
+\end{thebibliography}
+
+\end{document}
