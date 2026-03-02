@@ -119,7 +119,7 @@ const getApiBaseUrl = (): string => {
     if (envUrl) {
         return envUrl;
     }
-    
+
     // If running on same origin as backend (production deployment)
     if (typeof window !== 'undefined') {
         const { protocol, hostname } = window.location;
@@ -128,7 +128,7 @@ const getApiBaseUrl = (): string => {
             return `${protocol}//${hostname}/api`;
         }
     }
-    
+
     // Default to localhost for development
     return 'http://localhost:8000/api';
 };
@@ -239,7 +239,7 @@ export const HeatGuardAPI = {
         return response.data;
     },
 
-    
+
     getMortalityRisk: async (): Promise<MortalityRiskResponse> => {
         const response = await api.get<MortalityRiskResponse>('/mortality-risk');
         return response.data;

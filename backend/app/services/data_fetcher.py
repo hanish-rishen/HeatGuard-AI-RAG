@@ -8,10 +8,11 @@ PURPOSE:
 import requests
 import json
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 from datetime import datetime, timedelta
 import logging
 import asyncio
+import time
 from functools import lru_cache
 
 from app.core.config import get_backend_dir
@@ -19,6 +20,10 @@ from app.core.config import get_backend_dir
 # Lazy imports for heavy libraries
 pd = None
 httpx = None
+
+# Type aliases
+WeatherData = Dict[str, float]
+DistrictWeatherMap = Dict[str, Optional[WeatherData]]
 
 
 def _get_pandas():
@@ -45,6 +50,11 @@ logger = logging.getLogger(__name__)
 class DataFetcher:
     """
     Fetches real-time environmental data and static census data for districts.
+
+    Optimizations:
+    - In-memory weather caching with 1-hour TTL
+    - Batch weather API calls (50 districts per call)
+    - Region-based caching (25km radius)
     """
 
     _instance: Optional["DataFetcher"] = None
@@ -61,6 +71,9 @@ class DataFetcher:
         if not DataFetcher._initialized:
             self.district_coords = {}
             self._data_loaded = False
+            # In-memory weather cache: {(region_key, date): (data, timestamp)}
+            self._weather_cache: Dict[Tuple[str, str], Tuple[Dict, float]] = {}
+            self._cache_ttl = 3600  # 1 hour in seconds
             DataFetcher._initialized = True
 
     def _ensure_loaded(self):
@@ -349,6 +362,210 @@ class DataFetcher:
         except Exception as e:
             logger.error(f"Failed to fetch weather data for {district_name}: {e}")
             return None
+
+    def _get_region_key(self, lat: float, lon: float) -> str:
+        """Generate cache key for 25km region grid.
+
+        Rounds coordinates to nearest 0.25 degrees (~25km at equator)
+        to group nearby districts for caching.
+        """
+        # Round to 0.25 degree grid (approx 25km)
+        grid_lat = round(lat * 4) / 4
+        grid_lon = round(lon * 4) / 4
+        return f"{grid_lat:.2f},{grid_lon:.2f}"
+
+    def _get_cached_weather(
+        self, district_name: str, date: str
+    ) -> Optional[WeatherData]:
+        """Check if weather data is cached for a district."""
+        if district_name not in self.district_coords:
+            return None
+
+        coords = self.district_coords[district_name]
+        region_key = self._get_region_key(coords["lat"], coords["lon"])
+        cache_key = (region_key, date)
+
+        if cache_key in self._weather_cache:
+            data, timestamp = self._weather_cache[cache_key]
+            # Check if cache is still valid (1 hour TTL)
+            if time.time() - timestamp < self._cache_ttl:
+                return data
+            else:
+                # Expired, remove from cache
+                del self._weather_cache[cache_key]
+        return None
+
+    def _set_cached_weather(
+        self, district_name: str, date: str, data: WeatherData
+    ) -> None:
+        """Cache weather data for a district."""
+        if district_name not in self.district_coords:
+            return
+
+        coords = self.district_coords[district_name]
+        region_key = self._get_region_key(coords["lat"], coords["lon"])
+        cache_key = (region_key, date)
+        self._weather_cache[cache_key] = (data, time.time())
+
+    async def fetch_weather_batch(
+        self, district_names: List[str], date: Optional[str] = None
+    ) -> DistrictWeatherMap:
+        """Fetch weather for multiple districts in batch API calls.
+
+        Uses Open-Meteo's batch API to fetch up to 50 districts per call.
+        Also implements caching to avoid redundant API calls.
+
+        Args:
+            district_names: List of district names to fetch
+            date: Date string 'YYYY-MM-DD' (defaults to today)
+
+        Returns:
+            Dictionary mapping district_name -> weather_data (or None if failed)
+        """
+        self._ensure_loaded()
+
+        req_date = date or datetime.now().strftime("%Y-%m-%d")
+        results: DistrictWeatherMap = {}
+
+        # Separate districts into cached and uncached
+        cached_districts = []
+        uncached_districts = []
+
+        for district_name in district_names:
+            cached = self._get_cached_weather(district_name, req_date)
+            if cached:
+                results[district_name] = cached
+                cached_districts.append(district_name)
+            else:
+                uncached_districts.append(district_name)
+
+        if cached_districts:
+            logger.info(f"Using cached weather for {len(cached_districts)} districts")
+
+        if not uncached_districts:
+            return results
+
+        # Process uncached districts in batches of 50
+        batch_size = 50
+        for i in range(0, len(uncached_districts), batch_size):
+            batch = uncached_districts[i : i + batch_size]
+            batch_results = await self._fetch_weather_batch_api(batch, req_date)
+            results.update(batch_results)
+
+            # Cache the results
+            for district_name, weather_data in batch_results.items():
+                if weather_data:
+                    self._set_cached_weather(district_name, req_date, weather_data)
+
+        return results
+
+    async def _fetch_weather_batch_api(
+        self, district_names: List[str], date: str
+    ) -> DistrictWeatherMap:
+        """Make a single batch API call to Open-Meteo.
+
+        Open-Meteo supports multiple coordinates in one call:
+        &latitude=12.3,13.4,14.5&longitude=77.1,78.2,79.3
+        """
+        results: DistrictWeatherMap = {d: None for d in district_names}
+
+        # Collect coordinates
+        lats = []
+        lons = []
+        valid_districts = []
+
+        for district_name in district_names:
+            if district_name in self.district_coords:
+                coords = self.district_coords[district_name]
+                lats.append(coords["lat"])
+                lons.append(coords["lon"])
+                valid_districts.append(district_name)
+            else:
+                # Use default coordinates
+                lats.append(23.0)
+                lons.append(78.0)
+                valid_districts.append(district_name)
+
+        if not valid_districts:
+            return results
+
+        url = "https://api.open-meteo.com/v1/forecast"
+        params = {
+            "latitude": ",".join(map(str, lats)),
+            "longitude": ",".join(map(str, lons)),
+            "daily": "temperature_2m_max",
+            "current": "relative_humidity_2m",
+            "timezone": "auto",
+            "start_date": date,
+            "end_date": date,
+        }
+
+        try:
+            httpx_client = _get_httpx()
+            async with httpx_client.AsyncClient(timeout=20.0) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+            # Parse response - Open-Meteo returns list when multiple coordinates
+            if isinstance(data, list):
+                # Multiple locations returned
+                for i, location_data in enumerate(data):
+                    if i < len(valid_districts):
+                        district_name = valid_districts[i]
+                        weather = self._parse_weather_response(location_data)
+                        if weather:
+                            results[district_name] = weather
+            else:
+                # Single location (shouldn't happen with our batching)
+                district_name = valid_districts[0]
+                weather = self._parse_weather_response(data)
+                if weather:
+                    results[district_name] = weather
+
+        except Exception as e:
+            logger.error(
+                f"Batch weather API failed for {len(district_names)} districts: {e}"
+            )
+
+        return results
+
+    def _parse_weather_response(self, data: Dict) -> Optional[WeatherData]:
+        """Parse Open-Meteo response into weather data dict."""
+        try:
+            daily = data.get("daily", {})
+            current = data.get("current", {})
+
+            max_temp_list = daily.get("temperature_2m_max", [])
+            max_temp = max_temp_list[0] if max_temp_list else None
+            humidity = current.get("relative_humidity_2m")
+
+            if max_temp is None or humidity is None:
+                return None
+
+            # LST approximation: Max Temp + 2 degrees
+            lst = max_temp + 2.0
+
+            return {
+                "max_temp": float(max_temp),
+                "humidity": float(humidity),
+                "lst": float(lst),
+            }
+        except Exception as e:
+            logger.error(f"Failed to parse weather response: {e}")
+            return None
+
+    def clear_weather_cache(self) -> None:
+        """Clear all cached weather data."""
+        self._weather_cache.clear()
+        logger.info("Weather cache cleared")
+
+    def get_cache_stats(self) -> Dict[str, int]:
+        """Get cache statistics."""
+        return {
+            "cache_size": len(self._weather_cache),
+            "cache_ttl_seconds": self._cache_ttl,
+        }
 
 
 # Singleton instance

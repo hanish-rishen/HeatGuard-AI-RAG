@@ -10,7 +10,7 @@ environmental and demographic data. Implements the Rothfusz Regression for Heat 
 """
 
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List, Dict
 from datetime import datetime
 
 from app.core.config import get_settings, get_backend_dir
@@ -309,6 +309,58 @@ class PredictiveEngine:
         if self.encoder is not None:
             return list(self.encoder.classes_)
         return []
+
+    async def predict_batch(
+        self, districts_data: List[Dict], max_concurrent: int = 30
+    ) -> List[Tuple[float, float]]:
+        """Run predictions for multiple districts in parallel.
+
+        This is CPU-bound (XGBoost), so we use ThreadPoolExecutor
+        to parallelize across multiple cores.
+
+        Args:
+            districts_data: List of dicts with district data
+            max_concurrent: Maximum concurrent predictions (default: 30)
+
+        Returns:
+            List of (prediction, heat_index) tuples
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio
+
+        self._ensure_loaded()
+        if not self.is_loaded():
+            raise RuntimeError("Predictive model not loaded")
+
+        def predict_single(data: Dict) -> Tuple[float, float]:
+            """Wrapper for single prediction."""
+            try:
+                return self.predict(
+                    district_name=data["district_name"],
+                    max_temp=data["max_temp"],
+                    lst=data["lst"],
+                    humidity=data["humidity"],
+                    pct_children=data["pct_children"],
+                    pct_outdoor_workers=data["pct_outdoor_workers"],
+                    pct_vulnerable_social=data["pct_vulnerable_social"],
+                    date_str=data["date"],
+                )
+            except Exception as e:
+                logger.error(f"Prediction failed for {data.get('district_name')}: {e}")
+                return (0.0, 0.0)
+
+        # Use semaphore to limit concurrency
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def predict_with_limit(data: Dict) -> Tuple[float, float]:
+            async with semaphore:
+                loop = asyncio.get_event_loop()
+                # Run CPU-bound prediction in thread pool
+                return await loop.run_in_executor(None, predict_single, data)
+
+        # Run all predictions in parallel
+        results = await asyncio.gather(*[predict_with_limit(d) for d in districts_data])
+        return results
 
 
 # Global instance for dependency injection
