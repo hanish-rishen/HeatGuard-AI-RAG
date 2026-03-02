@@ -7,6 +7,7 @@ PURPOSE: Configures the ASGI application, middleware (CORS), and startup events.
 """
 
 import os
+import asyncio
 
 import uvicorn
 from fastapi import FastAPI
