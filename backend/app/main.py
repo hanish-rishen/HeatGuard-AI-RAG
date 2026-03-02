@@ -19,35 +19,30 @@ from app.api.routes import router as api_router
 settings = get_settings()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """
-    PURPOSE: Global startup/shutdown logic.
-    WHY: Handles resource initialization (ML Models, DB connections, Scheduler) before accepting requests.
-    NOTE: APScheduler runs daily rankings computation at 5:00 AM IST.
-    """
-    # --- Startup ---
-    print(f"[{settings.app_name}] Starting up...")
+async def background_init():
+    """Initialize heavy resources in background to prevent startup timeout."""
+    import asyncio
 
-    # Pre-load ML models during startup to prevent cold start delays
-    print(f"[{settings.app_name}] Pre-loading ML models...")
+    # Wait a bit for server to fully start accepting requests
+    await asyncio.sleep(2)
+
+    print(f"[{settings.app_name}] Background init starting...")
+
+    # Pre-load ML models
     try:
         from app.services.predictive_engine import predictive_engine
         from app.services.prescriptive_engine import prescriptive_engine
         from app.services.data_fetcher import data_fetcher
 
-        # Access properties to trigger initialization
         _ = predictive_engine.is_loaded()
         _ = prescriptive_engine.is_initialized()
         _ = data_fetcher.get_all_districts()
 
-        print(f"[{settings.app_name}] All engines loaded and ready!")
+        print(f"[{settings.app_name}] All engines loaded!")
     except Exception as e:
-        print(f"[{settings.app_name}] Warning: Failed to pre-load engines: {e}")
-        print(f"[{settings.app_name}] Engines will load on first request.")
+        print(f"[{settings.app_name}] Warning: Engine load failed: {e}")
 
-    # Start APScheduler for daily rankings
-    print(f"[{settings.app_name}] Starting task scheduler...")
+    # Start scheduler
     try:
         from app.scheduler import (
             setup_scheduler,
@@ -57,37 +52,36 @@ async def lifespan(app: FastAPI):
 
         setup_scheduler()
         start_scheduler()
-
-        # Run initial computation if no data for today
         await run_initial_computation_if_needed()
 
-        print(f"[{settings.app_name}] Scheduler started! Daily rankings at 5:00 AM IST")
+        print(f"[{settings.app_name}] Scheduler started!")
     except Exception as e:
-        print(f"[{settings.app_name}] Warning: Failed to start scheduler: {e}")
-        print(f"[{settings.app_name}] Rankings will compute on-demand only.")
+        print(f"[{settings.app_name}] Warning: Scheduler failed: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    PURPOSE: Global startup/shutdown logic.
+    WHY: Fast startup, heavy init done in background.
+    """
+    # --- Startup ---
+    print(f"[{settings.app_name}] Starting up...")
+
+    # Start background initialization (doesn't block startup)
+    asyncio.create_task(background_init())
+    print(f"[{settings.app_name}] Background init started...")
 
     yield
 
     # --- Shutdown ---
     print(f"[{settings.app_name}] Shutting down...")
-
-    # Shutdown scheduler gracefully
     try:
         from app.scheduler import shutdown_scheduler
 
         shutdown_scheduler()
-        print(f"[{settings.app_name}] Scheduler stopped")
     except Exception as e:
-        print(f"[{settings.app_name}] Warning: Failed to stop scheduler: {e}")
-
-    # Shutdown scheduler gracefully
-    try:
-        from app.scheduler import shutdown_scheduler
-
-        shutdown_scheduler()
-        print(f"[{settings.app_name}] Scheduler stopped")
-    except Exception as e:
-        print(f"[{settings.app_name}] Warning: Failed to stop scheduler: {e}")
+        print(f"[{settings.app_name}] Scheduler stop warning: {e}")
 
 
 app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
@@ -129,6 +123,7 @@ async def root():
 
 
 @app.get("/kaithheathcheck")
+@app.head("/kaithheathcheck")  # Support HEAD for UptimeRobot
 async def healthcheck():
     return {"status": "ok"}
 
