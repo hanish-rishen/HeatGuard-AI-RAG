@@ -56,7 +56,7 @@ services:
   - type: cron
     name: heatguard-daily-compute
     runtime: python
-    plan: free
+    plan: starter  # Free tier for cron jobs
     buildCommand: pip install -r backend/requirements.txt
     schedule: "0 5 * * *"  # 5:00 AM IST (11:30 PM UTC)
     startCommand: cd backend && python -m app.cron.daily_rankings
