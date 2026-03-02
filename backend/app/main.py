@@ -39,13 +39,23 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
 
 # CORS Configuration
-# WHY: Allow frontend (localhost:5173 usually) to communicate with backend
-origins = [
-    "http://localhost:3000",
-    "http://localhost:5173",  # Vite default
-    "http://127.0.0.1:5173",
-    "*",  # Permissive for development
-]
+# WHY: Allow frontend to communicate with backend across different environments
+# In production, set CORS_ORIGINS env var to your frontend domain(s)
+cors_origins_env = os.getenv("CORS_ORIGINS")
+if cors_origins_env:
+    # Production: use specific origins from env var (comma-separated)
+    origins = [origin.strip() for origin in cors_origins_env.split(",")]
+else:
+    # Development: allow common local development ports
+    origins = [
+        "http://localhost:3000",
+        "http://localhost:5173",  # Vite default
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8000",
+        "*",  # Permissive for development - remove in production
+    ]
 
 app.add_middleware(
     CORSMiddleware,

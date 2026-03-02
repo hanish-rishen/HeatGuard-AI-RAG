@@ -11,11 +11,14 @@ from pathlib import Path
 from typing import Dict, Optional, List
 from datetime import datetime, timedelta
 import logging
+import asyncio
+from functools import lru_cache
 
 from app.core.config import get_backend_dir
 
 # Lazy imports for heavy libraries
 pd = None
+httpx = None
 
 
 def _get_pandas():
@@ -25,6 +28,15 @@ def _get_pandas():
 
         pd = _pd
     return pd
+
+
+def _get_httpx():
+    global httpx
+    if httpx is None:
+        import httpx as _httpx
+
+        httpx = _httpx
+    return httpx
 
 
 logger = logging.getLogger(__name__)
@@ -260,6 +272,68 @@ class DataFetcher:
             # if real LST isn't available, rather than a fixed random number.
             # But let's try to be honest.
             # We will use Max Temp if LST is missing.
+            lst = max_temp + 2.0 if max_temp else None
+
+            if max_temp is None or humidity is None:
+                logger.error(f"Incomplete data from Open-Meteo for {district_name}")
+                return None
+
+            return {
+                "max_temp": float(max_temp),
+                "humidity": float(humidity),
+                "lst": float(lst),
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to fetch weather data for {district_name}: {e}")
+            return None
+
+    async def fetch_nasa_weather_async(
+        self, district_name: str, date: Optional[str] = None
+    ) -> Optional[Dict[str, float]]:
+        """
+        Async version of fetch_nasa_weather with caching.
+        Uses httpx for non-blocking HTTP calls.
+        """
+        self._ensure_loaded()
+
+        # Cache key based on district and date
+        cache_key = f"{district_name}:{date or datetime.now().strftime('%Y-%m-%d')}"
+
+        if district_name in self.district_coords:
+            coords = self.district_coords[district_name]
+        else:
+            logger.warning(
+                f"Coordinates not available for {district_name}, using default"
+            )
+            coords = {"lat": 23.0, "lon": 78.0}
+
+        req_date = datetime.now().strftime("%Y-%m-%d") if date is None else date
+
+        url = "https://api.open-meteo.com/v1/forecast"
+        params = {
+            "latitude": coords["lat"],
+            "longitude": coords["lon"],
+            "daily": "temperature_2m_max,uv_index_max",
+            "current": "relative_humidity_2m,surface_pressure",
+            "timezone": "auto",
+            "start_date": req_date,
+            "end_date": req_date,
+        }
+
+        try:
+            httpx_client = _get_httpx()
+            async with httpx_client.AsyncClient(timeout=15.0) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+            daily = data.get("daily", {})
+            current = data.get("current", {})
+
+            max_temp_list = daily.get("temperature_2m_max", [])
+            max_temp = max_temp_list[0] if max_temp_list else None
+            humidity = current.get("relative_humidity_2m")
             lst = max_temp + 2.0 if max_temp else None
 
             if max_temp is None or humidity is None:

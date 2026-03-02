@@ -111,7 +111,31 @@ export interface TokenResponse {
 
 // --- API Client ---
 
-const API_BASE_URL = 'http://localhost:8080/api';
+// Dynamic API URL - supports both local development and production deployment
+// Priority: 1) Vite env var, 2) Window location (same origin), 3) Localhost default
+const getApiBaseUrl = (): string => {
+    // Check for Vite environment variable (set in .env file)
+    const envUrl = import.meta.env.VITE_API_BASE_URL;
+    if (envUrl) {
+        return envUrl;
+    }
+    
+    // If running on same origin as backend (production deployment)
+    if (typeof window !== 'undefined') {
+        const { protocol, hostname } = window.location;
+        // Check if we're on a deployed domain (not localhost)
+        if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+            return `${protocol}//${hostname}/api`;
+        }
+    }
+    
+    // Default to localhost for development
+    return 'http://localhost:8000/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+console.log('[HeatGuard API] Using base URL:', API_BASE_URL);
+
 const AUTH_STORAGE_KEY = 'heatguard_auth_token_v1';
 
 const getTokenSafe = () => {
@@ -164,7 +188,12 @@ export const HeatGuardAPI = {
         try {
             await api.get('/auth/verify', { timeout: 4000 });
             return true;
-        } catch {
+        } catch (error: any) {
+            console.error('Auth verification failed:', error.message);
+            if (error.response) {
+                console.error('Response status:', error.response.status);
+                console.error('Response data:', error.response.data);
+            }
             return false;
         }
     },

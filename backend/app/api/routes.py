@@ -23,7 +23,7 @@ import logging
 import json
 import asyncio
 import io
-from typing import List
+from typing import List, Optional
 from fastapi.responses import StreamingResponse
 import hashlib
 import hmac
@@ -155,8 +155,18 @@ def _get_token_from_request(request: Request) -> str:
 
 
 def require_auth(request: Request) -> dict:
-    token = _get_token_from_request(request)
-    return _decode_token(token)
+    try:
+        token = _get_token_from_request(request)
+        logger.info(f"Token received: {token[:20]}...")
+        payload = _decode_token(token)
+        logger.info(f"Token decoded successfully for user: {payload.get('sub')}")
+        return payload
+    except HTTPException:
+        logger.warning(f"Auth failed for request: {request.url}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected auth error: {e}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 
 def _normalize_district_for_geocode(name: str) -> str:
@@ -222,9 +232,22 @@ async def health_check():
 
 @router.post("/auth/login", response_model=TokenResponse)
 async def login(request: LoginRequest):
-    if request.username != settings.auth_admin_username or not _verify_password(
-        request.password
-    ):
+    # Debug logging for auth issues
+    logger.info(f"Login attempt for user: {request.username}")
+    logger.info(f"Expected username: {settings.auth_admin_username}")
+    logger.info(f"Username match: {request.username == settings.auth_admin_username}")
+
+    if request.username != settings.auth_admin_username:
+        logger.warning(
+            f"Username mismatch: '{request.username}' != '{settings.auth_admin_username}'"
+        )
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    password_valid = _verify_password(request.password)
+    logger.info(f"Password valid: {password_valid}")
+
+    if not password_valid:
+        logger.warning(f"Password verification failed for user: {request.username}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
     expires_minutes = max(1, int(settings.jwt_access_token_expire_minutes))
     expires_delta = timedelta(minutes=expires_minutes)
@@ -558,6 +581,7 @@ async def get_district_rankings(_: dict = Depends(require_auth)):
     """
     PURPOSE: Auto-fetches real-time data for districts.
     Logic: Checks DB for today's data. If exists, returns it. Else, runs analysis.
+    Uses parallel processing with asyncio.gather for faster weather data fetching.
     """
 
     async def event_generator():
@@ -607,94 +631,110 @@ async def get_district_rankings(_: dict = Depends(require_auth)):
             else:
                 yield f"data: {json.dumps({'type': 'log', 'message': f'Starting new analysis for {len(all_districts)} districts...'})}\n\n"
 
+            # Process districts in parallel with semaphore to limit concurrency
+            # Open-Meteo allows reasonable concurrent requests but let's be polite (10 concurrent)
+            semaphore = asyncio.Semaphore(10)
+
+            async def process_district(district_name: str) -> Optional[dict]:
+                async with semaphore:
+                    try:
+                        # Fetch census data (local, no network call)
+                        census_data = data_fetcher.get_district_census(district_name)
+                        if not census_data:
+                            return None
+
+                        # Fetch weather data (async, parallel)
+                        weather_data = await data_fetcher.fetch_nasa_weather_async(
+                            district_name
+                        )
+                        if not weather_data:
+                            return None
+
+                        # Combine data
+                        district_input = {
+                            **weather_data,
+                            **census_data,
+                            "district_name": district_name,
+                            "date": today_str,
+                        }
+
+                        # Run prediction
+                        pred_load, heat_index = predictive_engine.predict(
+                            district_name=district_input["district_name"],
+                            max_temp=district_input["max_temp"],
+                            lst=district_input["lst"],
+                            humidity=district_input["humidity"],
+                            pct_children=district_input["pct_children"],
+                            pct_outdoor_workers=district_input["pct_outdoor_workers"],
+                            pct_vulnerable_social=district_input[
+                                "pct_vulnerable_social"
+                            ],
+                            date_str=district_input["date"],
+                        )
+
+                        # Normalize risk score (0-1)
+                        risk_status = (
+                            "Red"
+                            if pred_load > 0.8
+                            else "Amber"
+                            if pred_load > 0.5
+                            else "Green"
+                        )
+
+                        # Get coordinates
+                        coords = _get_district_coords(district_name)
+
+                        result_item = {
+                            "district_name": district_name,
+                            "lat": (coords or {}).get("lat"),
+                            "lon": (coords or {}).get("lon"),
+                            "risk_score": float(pred_load),
+                            "risk_status": risk_status,
+                            "heat_index": float(heat_index),
+                            "max_temp": weather_data["max_temp"],
+                            "humidity": weather_data["humidity"],
+                            "lst": weather_data["lst"],
+                            "pct_children": census_data["pct_children"],
+                            "pct_outdoor_workers": census_data["pct_outdoor_workers"],
+                            "pct_vulnerable_social": census_data[
+                                "pct_vulnerable_social"
+                            ],
+                        }
+
+                        # Save to DB immediately
+                        db_manager.save_result(result_item)
+                        return result_item
+
+                    except Exception as e:
+                        logger.error(f"Failed to analyze {district_name}: {e}")
+                        return None
+
+            # Process in batches to show progress
+            batch_size = 50
+            total_to_process = len(districts_to_analyze)
             processed_count = 0
 
-            for i, district_name in enumerate(districts_to_analyze):
-                try:
-                    # Log progress less frequently
-                    if i % 10 == 0:
-                        yield f"data: {json.dumps({'type': 'log', 'message': f'Processing batch {i}-{min(i + 10, len(districts_to_analyze))}...'})}\n\n"
-                        await asyncio.sleep(0.001)
+            for batch_start in range(0, total_to_process, batch_size):
+                batch_end = min(batch_start + batch_size, total_to_process)
+                batch = districts_to_analyze[batch_start:batch_end]
 
-                    # Fetch census data
-                    census_data = data_fetcher.get_district_census(district_name)
-                    if not census_data:
-                        continue
+                yield f"data: {json.dumps({'type': 'log', 'message': f'Processing districts {batch_start}-{batch_end} of {total_to_process}...'})}\n\n"
 
-                    # Fetch weather data
-                    weather_data = data_fetcher.fetch_nasa_weather(district_name)
-                    if not weather_data:
-                        # No mock data allowed as per strict user instruction.
-                        # If real data cannot be fetched, we skip this district.
-                        # User requested "put a placeholder saying real data is needed",
-                        # but since this is an API accumulating rankings, skipping is safer
-                        # to avoid polluting the rankings with bad data.
-                        # The frontend will simply show fewer districts.
-                        # yield f"data: {json.dumps({'type': 'log', 'message': f'Skipping {district_name}: Weather data unavailable.'})}\n\n"
-                        continue
+                # Process batch in parallel
+                batch_results = await asyncio.gather(
+                    *[process_district(d) for d in batch]
+                )
 
-                    # Combine data
-                    district_input = {
-                        **weather_data,
-                        **census_data,
-                        "district_name": district_name,
-                        "date": today_str,
-                    }
+                # Add successful results
+                for result in batch_results:
+                    if result:
+                        results.append(result)
+                        processed_count += 1
 
-                    # Run prediction
-                    pred_load, heat_index = predictive_engine.predict(
-                        district_name=district_input["district_name"],
-                        max_temp=district_input["max_temp"],
-                        lst=district_input["lst"],
-                        humidity=district_input["humidity"],
-                        # heat_index calculated internally
-                        pct_children=district_input["pct_children"],
-                        pct_outdoor_workers=district_input["pct_outdoor_workers"],
-                        pct_vulnerable_social=district_input["pct_vulnerable_social"],
-                        date_str=district_input["date"],
-                    )
+                # Small delay to allow SSE to flush
+                await asyncio.sleep(0.01)
 
-                    # Normalize risk score (0-1)
-                    risk_status = (
-                        "Red"
-                        if pred_load > 0.8
-                        else "Amber"
-                        if pred_load > 0.5
-                        else "Green"
-                    )
-
-                    # Get coordinates.
-                    # IMPORTANT: don't default unknown districts to a fixed point.
-                    # That makes the map look broken (all pins stack), and hides the fact that we lack coordinates.
-                    coords = _get_district_coords(district_name)
-
-                    result_item = {
-                        "district_name": district_name,
-                        "lat": (coords or {}).get("lat"),
-                        "lon": (coords or {}).get("lon"),
-                        "risk_score": float(pred_load),
-                        "risk_status": risk_status,
-                        "heat_index": float(heat_index),
-                        "max_temp": weather_data["max_temp"],
-                        "humidity": weather_data["humidity"],
-                        "lst": weather_data["lst"],
-                        "pct_children": census_data["pct_children"],
-                        "pct_outdoor_workers": census_data["pct_outdoor_workers"],
-                        "pct_vulnerable_social": census_data["pct_vulnerable_social"],
-                    }
-
-                    results.append(result_item)
-
-                    # Save to DB immediately
-                    db_manager.save_result(result_item)
-                    processed_count += 1
-
-                except Exception as e:
-                    logger.error(f"Failed to analyze {district_name}: {e}")
-                    # yield f"data: {json.dumps({'type': 'log', 'message': f'Error analyzing {district_name}: {str(e)}'})}\n\n"
-                    continue
-
-            # Attach mortality risk based on NFHS disease indicators.
+            # Attach mortality risk based on NFHS disease indicators
             nfhs_service.attach_mortality_risk(results)
 
             # Sort by risk score (descending)

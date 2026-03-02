@@ -25,8 +25,28 @@ class DBManager:
             self._initialized = True
 
     def init_db(self):
-        # Use /tmp for container environments (guaranteed writable)
-        self.db_path = Path("/tmp") / "district_analytics.db"
+        # Use backend directory for database (cross-platform compatible)
+        import tempfile
+        import os
+
+        # Try different locations in order of preference
+        if os.name == "nt":  # Windows
+            # On Windows, use the backend directory
+            self.db_path = get_backend_dir() / "district_analytics.db"
+        else:
+            # On Linux/Mac, try /tmp first, then fallback to backend dir
+            tmp_path = Path("/tmp") / "district_analytics.db"
+            try:
+                # Test if /tmp is writable
+                tmp_path.parent.mkdir(parents=True, exist_ok=True)
+                test_file = tmp_path.parent / ".write_test"
+                test_file.touch()
+                test_file.unlink()
+                self.db_path = tmp_path
+            except (OSError, PermissionError):
+                # Fallback to backend directory
+                self.db_path = get_backend_dir() / "district_analytics.db"
+
         logger.info(f"Using database at: {self.db_path}")
 
         try:
@@ -93,6 +113,7 @@ class DBManager:
             logger.error(f"Failed to initialize database: {e}")
 
     def get_connection(self):
+        self._ensure_initialized()
         return sqlite3.connect(self.db_path)
 
     def get_results_for_date(self, date_str: str) -> List[Dict]:
