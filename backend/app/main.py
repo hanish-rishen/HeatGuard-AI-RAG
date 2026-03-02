@@ -23,8 +23,8 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     """
     PURPOSE: Global startup/shutdown logic.
-    WHY: Handles resource initialization (ML Models, DB connections) before accepting requests.
-    NOTE: Engines use lazy loading - they will initialize on first request.
+    WHY: Handles resource initialization (ML Models, DB connections, Scheduler) before accepting requests.
+    NOTE: APScheduler runs daily rankings computation at 5:00 AM IST.
     """
     # --- Startup ---
     print(f"[{settings.app_name}] Starting up...")
@@ -46,10 +46,48 @@ async def lifespan(app: FastAPI):
         print(f"[{settings.app_name}] Warning: Failed to pre-load engines: {e}")
         print(f"[{settings.app_name}] Engines will load on first request.")
 
+    # Start APScheduler for daily rankings
+    print(f"[{settings.app_name}] Starting task scheduler...")
+    try:
+        from app.scheduler import (
+            setup_scheduler,
+            start_scheduler,
+            run_initial_computation_if_needed,
+        )
+
+        setup_scheduler()
+        start_scheduler()
+
+        # Run initial computation if no data for today
+        await run_initial_computation_if_needed()
+
+        print(f"[{settings.app_name}] Scheduler started! Daily rankings at 5:00 AM IST")
+    except Exception as e:
+        print(f"[{settings.app_name}] Warning: Failed to start scheduler: {e}")
+        print(f"[{settings.app_name}] Rankings will compute on-demand only.")
+
     yield
 
     # --- Shutdown ---
     print(f"[{settings.app_name}] Shutting down...")
+
+    # Shutdown scheduler gracefully
+    try:
+        from app.scheduler import shutdown_scheduler
+
+        shutdown_scheduler()
+        print(f"[{settings.app_name}] Scheduler stopped")
+    except Exception as e:
+        print(f"[{settings.app_name}] Warning: Failed to stop scheduler: {e}")
+
+    # Shutdown scheduler gracefully
+    try:
+        from app.scheduler import shutdown_scheduler
+
+        shutdown_scheduler()
+        print(f"[{settings.app_name}] Scheduler stopped")
+    except Exception as e:
+        print(f"[{settings.app_name}] Warning: Failed to stop scheduler: {e}")
 
 
 app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
