@@ -500,33 +500,49 @@ class DataFetcher:
             "end_date": date,
         }
 
-        try:
-            httpx_client = _get_httpx()
-            async with httpx_client.AsyncClient(timeout=20.0) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
+        # Try with retries
+        max_retries = 3
+        retry_delay = 1.0
 
-            # Parse response - Open-Meteo returns list when multiple coordinates
-            if isinstance(data, list):
-                # Multiple locations returned
-                for i, location_data in enumerate(data):
-                    if i < len(valid_districts):
-                        district_name = valid_districts[i]
-                        weather = self._parse_weather_response(location_data)
-                        if weather:
-                            results[district_name] = weather
-            else:
-                # Single location (shouldn't happen with our batching)
-                district_name = valid_districts[0]
-                weather = self._parse_weather_response(data)
-                if weather:
-                    results[district_name] = weather
+        for attempt in range(max_retries):
+            try:
+                httpx_client = _get_httpx()
+                # Increased timeout for batch requests
+                async with httpx_client.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(url, params=params)
+                    response.raise_for_status()
+                    data = response.json()
 
-        except Exception as e:
-            logger.error(
-                f"Batch weather API failed for {len(district_names)} districts: {e}"
-            )
+                # Parse response - Open-Meteo returns list when multiple coordinates
+                if isinstance(data, list):
+                    # Multiple locations returned
+                    for i, location_data in enumerate(data):
+                        if i < len(valid_districts):
+                            district_name = valid_districts[i]
+                            weather = self._parse_weather_response(location_data)
+                            if weather:
+                                results[district_name] = weather
+                else:
+                    # Single location (shouldn't happen with our batching)
+                    district_name = valid_districts[0]
+                    weather = self._parse_weather_response(data)
+                    if weather:
+                        results[district_name] = weather
+
+                # Success - break out of retry loop
+                break
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Batch weather API attempt {attempt + 1} failed for {len(district_names)} districts: {e}. Retrying..."
+                    )
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(
+                        f"Batch weather API failed after {max_retries} attempts for {len(district_names)} districts: {e}"
+                    )
 
         return results
 

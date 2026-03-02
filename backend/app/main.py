@@ -28,7 +28,23 @@ async def lifespan(app: FastAPI):
     """
     # --- Startup ---
     print(f"[{settings.app_name}] Starting up...")
-    print(f"[{settings.app_name}] Engines will initialize lazily on first request.")
+
+    # Pre-load ML models during startup to prevent cold start delays
+    print(f"[{settings.app_name}] Pre-loading ML models...")
+    try:
+        from app.services.predictive_engine import predictive_engine
+        from app.services.prescriptive_engine import prescriptive_engine
+        from app.services.data_fetcher import data_fetcher
+
+        # Access properties to trigger initialization
+        _ = predictive_engine.is_loaded()
+        _ = prescriptive_engine.is_initialized()
+        _ = data_fetcher.get_all_districts()
+
+        print(f"[{settings.app_name}] All engines loaded and ready!")
+    except Exception as e:
+        print(f"[{settings.app_name}] Warning: Failed to pre-load engines: {e}")
+        print(f"[{settings.app_name}] Engines will load on first request.")
 
     yield
 
