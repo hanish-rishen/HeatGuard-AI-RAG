@@ -1,0 +1,114 @@
+# Render.com Configuration for HeatGuard AI
+# This file configures both the web service and cron job on Render
+
+# Main Web Service
+services:
+  - type: web
+    name: heatguard-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PORT
+        value: 10000
+      - key: HOST
+        value: 0.0.0.0
+      - key: DEBUG
+        value: "false"
+      # Add your environment variables here or in Render dashboard
+      - key: JWT_SECRET_KEY
+        generateValue: true  # Auto-generate or set manually in dashboard
+      - key: AUTH_ADMIN_USERNAME
+        value: admin
+      - key: AUTH_ADMIN_PASSWORD
+        value: admin123
+      - key: AUTH_ADMIN_PASSWORD_HASH
+        value: ""
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "60"
+      - key: MISTRAL_API_KEY
+        value: ""
+      - key: MISTRAL_MODEL
+        value: mistral-small-latest
+      - key: CHROMA_PERSIST_DIR
+        value: ./chroma_db
+      - key: CHROMA_COLLECTION_NAME
+        value: heat_action_plans
+      - key: MODEL_PATH
+        value: ../Models/heat_health_model_v1.pkl
+      - key: ENCODER_PATH
+        value: ../Models/district_encoder.pkl
+      - key: RISK_THRESHOLD_GREEN
+        value: "0.3"
+      - key: RISK_THRESHOLD_AMBER
+        value: "0.6"
+      - key: CORS_ORIGINS
+        value: https://heatguard-ai.vercel.app  # Update with your frontend URL
+    autoDeploy: true
+    healthCheckPath: /kaithheathcheck
+
+  # Cron Job for Daily Rankings Computation
+  - type: cron
+    name: heatguard-daily-compute
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    schedule: "0 5 * * *"  # 5:00 AM IST (11:30 PM UTC)
+    startCommand: cd backend && python -m app.cron.daily_rankings
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      # Copy same env vars as web service (or reference from web service)
+      - key: JWT_SECRET_KEY
+        fromService:
+          name: heatguard-api
+          type: web
+          envVarKey: JWT_SECRET_KEY
+      - key: AUTH_ADMIN_USERNAME
+        fromService:
+          name: heatguard-api
+          type: web
+          envVarKey: AUTH_ADMIN_USERNAME
+      - key: AUTH_ADMIN_PASSWORD
+        fromService:
+          name: heatguard-api
+          type: web
+          envVarKey: AUTH_ADMIN_PASSWORD
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: MISTRAL_API_KEY
+        fromService:
+          name: heatguard-api
+          type: web
+          envVarKey: MISTRAL_API_KEY
+      - key: CHROMA_PERSIST_DIR
+        value: ./chroma_db
+      - key: CHROMA_COLLECTION_NAME
+        value: heat_action_plans
+      - key: MODEL_PATH
+        value: ../Models/heat_health_model_v1.pkl
+      - key: ENCODER_PATH
+        value: ../Models/district_encoder.pkl
+
+# Static Site for Frontend (Optional - if you want to move from Vercel)
+# Uncomment below if you want to host frontend on Render too
+# services:
+#   - type: static
+#     name: heatguard-frontend
+#     runtime: static
+#     buildCommand: cd frontend && npm install && npm run build
+#     staticPublishPath: ./frontend/dist
+#     envVars:
+#       - key: NODE_VERSION
+#         value: 20
+#       - key: VITE_API_BASE_URL
+#         value: https://heatguard-api.onrender.com/api
+#     routes:
+#       - type: rewrite
+#         source: /*
+#         destination: /index.html
