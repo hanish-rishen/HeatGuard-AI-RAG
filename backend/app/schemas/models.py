@@ -160,6 +160,16 @@ class AnalysisResponse(BaseModel):
     analysis_date: str = Field(..., description="Date of analysis")
     model_version: str = Field("v1.0", description="Model version used")
 
+    @field_validator("analysis_date", mode="before")
+    @classmethod
+    def convert_analysis_date_to_string(cls, v):
+        """Convert datetime.date to string for PostgreSQL compatibility."""
+        if v is None:
+            return None
+        if hasattr(v, "strftime"):
+            return v.strftime("%Y-%m-%d")
+        return str(v)
+
 
 class MortalityRiskItem(BaseModel):
     """
@@ -192,6 +202,16 @@ class MortalityRiskResponse(BaseModel):
     total_districts: int
     as_of_date: str | None = None
     items: list[MortalityRiskItem]
+
+    @field_validator("as_of_date", mode="before")
+    @classmethod
+    def convert_as_of_date_to_string(cls, v):
+        """Convert datetime.date to string for PostgreSQL compatibility."""
+        if v is None:
+            return None
+        if hasattr(v, "strftime"):
+            return v.strftime("%Y-%m-%d")
+        return str(v)
 
 
 class HealthCheckResponse(BaseModel):

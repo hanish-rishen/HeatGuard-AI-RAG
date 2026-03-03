@@ -891,6 +891,9 @@ async def get_mortality_risk():
         latest_date = None
         items = []
         for district_name, risk_score, date_str in rows:
+            # Convert date to string for PostgreSQL compatibility
+            if hasattr(date_str, "strftime"):
+                date_str = date_str.strftime("%Y-%m-%d")
             if date_str and (latest_date is None or date_str > latest_date):
                 latest_date = date_str
             mortality = nfhs_service.get_mortality_risk(str(district_name), risk_score)

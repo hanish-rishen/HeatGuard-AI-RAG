@@ -299,6 +299,22 @@ class DBManager:
             logger.error(f"Error in bulk save: {e}")
             return 0
 
+    def _convert_dates_to_strings(self, rows: List[Dict]) -> List[Dict]:
+        """Helper to convert all date objects to strings in query results."""
+        if not rows:
+            return rows
+
+        result = []
+        for row in rows:
+            converted = {}
+            for key, value in row.items():
+                if hasattr(value, "strftime"):  # datetime.date or datetime.datetime
+                    converted[key] = value.strftime("%Y-%m-%d")
+                else:
+                    converted[key] = value
+            result.append(converted)
+        return result
+
     def get_results_for_date(self, date_str: str) -> List[Dict]:
         """Fetch all results for a specific date."""
         self._ensure_initialized()
@@ -312,7 +328,7 @@ class DBManager:
                 )
                 rows = cursor.fetchall()
                 conn.close()
-                return [dict(row) for row in rows]
+                return self._convert_dates_to_strings([dict(row) for row in rows])
             else:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
@@ -352,7 +368,10 @@ class DBManager:
             row = cursor.fetchone()
             conn.close()
 
-            return dict(row) if row else None
+            if row:
+                converted = self._convert_dates_to_strings([dict(row)])
+                return converted[0] if converted else None
+            return None
 
         except Exception as e:
             logger.error(f"Error fetching district result: {e}")
@@ -390,7 +409,7 @@ class DBManager:
 
             rows = cursor.fetchall()
             conn.close()
-            return [dict(row) for row in rows]
+            return self._convert_dates_to_strings([dict(row) for row in rows])
 
         except Exception as e:
             logger.error(f"Error fetching district history: {e}")
