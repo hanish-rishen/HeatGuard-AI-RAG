@@ -152,35 +152,6 @@ async def background_init():
                 flush=True,
             )
             # Don't mark ready - let the frontend keep polling
-        else:
-            # Check if we need synthetic history for 7-day trends
-            try:
-                from datetime import datetime, timedelta
-                from app.scheduler import generate_synthetic_history
-
-                # Check if we have at least 3 days of historical data
-                past_dates = []
-                for i in range(1, 4):  # Check past 3 days
-                    date_str = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-                    existing = db_manager.get_results_for_date(date_str)
-                    if existing and len(existing) > 0:
-                        past_dates.append(date_str)
-
-                if len(past_dates) < 2:  # Less than 2 days of history
-                    print(
-                        f"[{settings.app_name}] Generating synthetic 7-day history for trends...",
-                        flush=True,
-                    )
-                    await generate_synthetic_history(days=7)
-                    print(
-                        f"[{settings.app_name}] Synthetic history generated!",
-                        flush=True,
-                    )
-            except Exception as synth_error:
-                print(
-                    f"[{settings.app_name}] Warning: Could not generate synthetic history: {synth_error}",
-                    flush=True,
-                )
 
     except Exception as e:
         print(f"[{settings.app_name}] Warning: Data check failed: {e}", flush=True)

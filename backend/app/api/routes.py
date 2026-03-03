@@ -666,158 +666,70 @@ async def seed_knowledge_base(_: dict = Depends(require_auth)):
 @router.get("/districts/rankings")
 async def get_district_rankings(_: dict = Depends(require_auth)):
     """
-    PURPOSE: Auto-fetches real-time data for districts with full optimizations.
-
-    Optimizations:
-    - Batch weather API calls (50 districts per call, 98% fewer API calls)
-    - In-memory weather caching (1-hour TTL, 25km region grid)
-    - Async batch ML predictions (30 concurrent)
-    - Bulk DB inserts (single transaction for all districts)
-    - Priority loading: High-risk districts computed first
-
-    Expected Performance:
-    - First load (cold cache): 2-4 seconds (was 2-3 minutes)
-    - Daily active user: <1 second (pre-computed data)
+    PURPOSE: Fetch district rankings - simplified version without caching.
+    Always fetches fresh data from database or computes if missing.
     """
 
     async def event_generator():
         start_time = time.time()
+        all_batch_results = []
+        processed_count = 0
 
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
 
-            # 0. Check Redis cache first (fastest)
-            if CACHE_ENABLED and cache_manager:
-                try:
-                    cached_rankings = cache_manager.get_rankings(today_str)
-                    if cached_rankings:
-                        logger.info(
-                            f"Found {len(cached_rankings)} rankings in Redis cache"
-                        )
-                        yield f"data: {json.dumps({'type': 'log', 'message': 'Retrieved rankings from cache.'})}\n\n"
-
-                        nfhs_service.attach_mortality_risk(cached_rankings)
-                        cached_rankings.sort(
-                            key=lambda x: x["risk_score"], reverse=True
-                        )
-
-                        final_response = {
-                            "date": today_str,
-                            "total_districts": len(cached_rankings),
-                            "rankings": cached_rankings,
-                            "cached": True,
-                            "compute_time": 0,
-                        }
-                        yield f"data: {json.dumps({'type': 'result', 'data': final_response})}\n\n"
-                        yield f"data: {json.dumps({'type': 'complete'})}\n\n"
-                        return
-                except Exception as cache_error:
-                    logger.warning(
-                        f"Cache error (proceeding without cache): {cache_error}"
-                    )
-
-            # 1. Check if FRESH data for today already exists (computed in last 30 min)
+            # Get existing data from database
             existing_results = db_manager.get_results_for_date(today_str)
             all_districts = data_fetcher.get_all_districts()
-            has_fresh = db_manager.has_fresh_data(max_age_minutes=30)
 
-            # If we have FRESH results for ALL districts (or at least 95%)
-            if (
-                has_fresh
-                and existing_results
-                and len(existing_results) >= len(all_districts) * 0.95
-            ):
+            if not all_districts:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'No districts found'})}\n\n"
+                return
+
+            # If we already have data for today (95% or more districts), return it
+            if existing_results and len(existing_results) >= len(all_districts) * 0.95:
                 logger.info(
-                    f"Found {len(existing_results)} fresh cached results for {today_str}"
+                    f"Using existing data from database: {len(existing_results)} districts"
                 )
-                yield f"data: {json.dumps({'type': 'log', 'message': 'Retrieved cached analysis for today.'})}\n\n"
+                yield f"data: {json.dumps({'type': 'log', 'message': f'Using existing data for {len(existing_results)} districts'})}\n\n"
 
                 nfhs_service.attach_mortality_risk(existing_results)
                 existing_results.sort(key=lambda x: x["risk_score"], reverse=True)
-
-                # Cache in Redis for next time (if available)
-                if CACHE_ENABLED and cache_manager:
-                    try:
-                        cache_manager.set_rankings(today_str, existing_results)
-                    except Exception as cache_error:
-                        logger.warning(f"Failed to cache rankings: {cache_error}")
 
                 final_response = {
                     "date": today_str,
                     "total_districts": len(existing_results),
                     "rankings": existing_results,
-                    "cached": True,
+                    "cached": False,
                     "compute_time": 0,
                 }
                 yield f"data: {json.dumps({'type': 'result', 'data': final_response})}\n\n"
                 yield f"data: {json.dumps({'type': 'complete'})}\n\n"
                 return
 
-            # Data exists but is stale - log it and continue to recompute
-            if existing_results and len(existing_results) > 0:
-                logger.info(
-                    f"Found {len(existing_results)} stale results, recomputing..."
-                )
-
-            # 2. If Partial or No data, run analysis
-            if not all_districts:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'No districts found'})}\n\n"
-                return
-
-            existing_names = (
-                set(r["district_name"] for r in existing_results)
-                if existing_results
-                else set()
-            )
-            districts_to_analyze = [d for d in all_districts if d not in existing_names]
-
-            results = list(existing_results) if existing_results else []
+            # Need to compute fresh data
+            districts_to_analyze = all_districts
+            results = []
             total_to_process = len(districts_to_analyze)
 
-            logger.info(
-                f"Analyzing {total_to_process} districts with optimized batch processing"
-            )
+            logger.info(f"Computing fresh data for {total_to_process} districts")
+            yield f"data: {json.dumps({'type': 'log', 'message': f'Computing fresh data for {total_to_process} districts...'})}\n\n"
 
-            if existing_results:
-                yield f"data: {json.dumps({'type': 'log', 'message': f'Found {len(existing_results)} cached results. Analyzing remaining {total_to_process} districts...'})}\n\n"
-            else:
-                yield f"data: {json.dumps({'type': 'log', 'message': f'Starting optimized analysis for {total_to_process} districts...'})}\n\n"
-
-            # 3. PRIORITY LOADING: Sort by risk potential (high-risk first)
-            # Use max_temp + humidity as a proxy for risk
-            def get_risk_priority(district_name: str) -> float:
-                """Higher = higher priority (compute first)."""
-                # Get coordinates for weather estimation
-                coords = _get_district_coords(district_name)
-                if coords:
-                    # Rough heuristic: higher latitude = potentially cooler, lower priority
-                    # Lower latitude (south India) = hotter, higher priority
-                    lat = coords.get("lat", 23)
-                    return 30 - abs(lat - 15)  # Prioritize southern hot regions
-                return 0
-
-            # Sort districts by priority (high-risk regions first)
-            districts_to_analyze.sort(key=get_risk_priority, reverse=True)
-
-            # 4. Process in batches of 50 with bulk operations
+            # Process in batches
             batch_size = 50
-            processed_count = 0
-            all_batch_results = []
-
             for batch_start in range(0, total_to_process, batch_size):
                 batch_end = min(batch_start + batch_size, total_to_process)
                 batch_districts = districts_to_analyze[batch_start:batch_end]
 
                 percent_complete = int((batch_start / total_to_process) * 100)
+                yield f"data: {json.dumps({'type': 'progress', 'completed': batch_start, 'total': total_to_process, 'percent': percent_complete, 'message': f'Processing districts {batch_start}-{batch_end}...'})}\n\n"
 
-                yield f"data: {json.dumps({'type': 'progress', 'completed': batch_start, 'total': total_to_process, 'percent': percent_complete, 'message': f'Fetching weather for districts {batch_start}-{batch_end}...'})}\n\n"
-
-                # OPTIMIZATION 1: Batch fetch weather (50 districts per API call)
+                # Fetch weather
                 weather_map = await data_fetcher.fetch_weather_batch(
                     batch_districts, today_str
                 )
 
-                # Prepare data for batch prediction
+                # Prepare data
                 districts_with_data = []
                 for district_name in batch_districts:
                     weather_data = weather_map.get(district_name)
@@ -840,14 +752,14 @@ async def get_district_rankings(_: dict = Depends(require_auth)):
                 if not districts_with_data:
                     continue
 
-                # OPTIMIZATION 2: Batch predict (30 concurrent)
-                yield f"data: {json.dumps({'type': 'progress', 'completed': batch_start, 'total': total_to_process, 'percent': percent_complete, 'message': f'Computing risk for districts {batch_start}-{batch_end}...'})}\n\n"
+                # Predict
+                yield f"data: {json.dumps({'type': 'progress', 'completed': batch_start, 'total': total_to_process, 'percent': percent_complete, 'message': f'Computing risk...'})}\n\n"
 
                 predictions = await predictive_engine.predict_batch(
                     districts_with_data, max_concurrent=30
                 )
 
-                # Build result items
+                # Build results
                 batch_results = []
                 for i, (pred_load, heat_index) in enumerate(predictions):
                     data = districts_with_data[i]
@@ -890,7 +802,7 @@ async def get_district_rankings(_: dict = Depends(require_auth)):
                     if high_risk:
                         yield f"data: {json.dumps({'type': 'priority', 'data': high_risk[:10], 'message': f'Found {len(high_risk)} high-risk districts'})}\n\n"
 
-            # OPTIMIZATION 3: Bulk save all results in single transaction
+            # Bulk save all results in single transaction
             if all_batch_results:
                 yield f"data: {json.dumps({'type': 'progress', 'completed': processed_count, 'total': total_to_process, 'percent': 95, 'message': 'Saving results to database...'})}\n\n"
                 db_manager.save_results_bulk(all_batch_results)
@@ -899,13 +811,6 @@ async def get_district_rankings(_: dict = Depends(require_auth)):
             # Attach mortality risk and sort
             nfhs_service.attach_mortality_risk(results)
             results.sort(key=lambda x: x["risk_score"], reverse=True)
-
-            # Cache results in Redis for fast retrieval (if available)
-            if CACHE_ENABLED and cache_manager:
-                try:
-                    cache_manager.set_rankings(today_str, results)
-                except Exception as cache_error:
-                    logger.warning(f"Failed to cache results: {cache_error}")
 
             compute_time = time.time() - start_time
             logger.info(
@@ -943,18 +848,6 @@ async def get_mortality_risk():
     PURPOSE: Combine HeatGuard heat risk with NFHS disease indicators for mortality risk.
     """
     try:
-        # Try cache first (if available)
-        if CACHE_ENABLED and cache_manager:
-            try:
-                today_str = datetime.now().strftime("%Y-%m-%d")
-                cache_key = f"mortality_risk:{today_str}"
-                cached = cache_manager.get(cache_key)
-                if cached:
-                    logger.info("Returning cached mortality risk data")
-                    return MortalityRiskResponse(**cached)
-            except Exception as cache_error:
-                logger.warning(f"Cache error (proceeding without cache): {cache_error}")
-
         # Fetch from database
         conn = db_manager.get_connection()
         cursor = conn.cursor()
@@ -991,15 +884,6 @@ async def get_mortality_risk():
             total_districts=len(items), as_of_date=latest_date, items=items
         )
 
-        # Cache the response (if available)
-        if CACHE_ENABLED and cache_manager:
-            try:
-                cache_manager.set(
-                    cache_key, response.dict(), ttl=3600
-                )  # Cache for 1 hour
-            except Exception as cache_error:
-                logger.warning(f"Failed to cache mortality risk: {cache_error}")
-
         return response
     except Exception as e:
         logger.error(f"Failed to compute mortality risk: {e}")
@@ -1012,75 +896,11 @@ async def get_district_history(
 ):
     """
     Get historical trend data for a specific district.
-
-    Notes:
-    - Default returns the past ~30 records so the frontend can construct a stable 7-day chart
-        even when some days are missing or a district wasn't processed every day.
+    Returns real data from database only - no synthetic data generation.
     """
     try:
-        # Try cache first (if available)
-        cache_key = f"history:{district_name}:{limit}"
-        if CACHE_ENABLED and cache_manager:
-            try:
-                cached = cache_manager.get(cache_key)
-                if cached:
-                    logger.info(f"Returning cached history for {district_name}")
-                    return cached
-            except Exception as cache_error:
-                logger.warning(f"Cache get failed: {cache_error}")
-
         history = db_manager.get_district_history(district_name, days=limit)
-
-        # Dev-friendly behavior: if we have < 7 days of history, generate a deterministic
-        # synthetic 7-day series around the latest known datapoint so charts don't look broken.
-        # This only affects the history endpoint response (it does NOT write into the DB).
-        if history and len(history) < 7:
-            from datetime import datetime, timedelta
-
-            last = history[-1]
-            try:
-                last_date = datetime.strptime(last.get("date"), "%Y-%m-%d")
-            except Exception:
-                last_date = datetime.now()
-
-            base_max = float(last.get("max_temp") or 35.0)
-            base_hum = float(last.get("humidity") or 50.0)
-            base_lst = float(last.get("lst") or (base_max + 2.0))
-            base_risk = float(last.get("risk_score") or 0.5)
-            base_hi = float(last.get("heat_index") or 40.0)
-
-            # Build a 7-day window ending on last_date
-            out = []
-            for i in range(6, -1, -1):
-                d = last_date - timedelta(days=i)
-                # small deterministic wobble
-                wob = ((d.toordinal() % 7) - 3) * 0.15
-                out.append(
-                    {
-                        "date": d.strftime("%Y-%m-%d"),
-                        "risk_score": max(0.0, min(1.0, base_risk + wob * 0.03)),
-                        "heat_index": base_hi + wob,
-                        "max_temp": base_max + wob,
-                        "humidity": max(0.0, min(100.0, base_hum - wob)),
-                        "lst": base_lst + wob,
-                    }
-                )
-            # Cache the generated history (if available)
-            if CACHE_ENABLED and cache_manager:
-                try:
-                    cache_manager.set(cache_key, out, ttl=3600)
-                except Exception as cache_error:
-                    logger.warning(f"Cache set failed: {cache_error}")
-            return out
-
-        # If no history, return empty list (client handles it)
-        result = history or []
-        if result and CACHE_ENABLED and cache_manager:
-            try:
-                cache_manager.set(cache_key, result, ttl=3600)
-            except Exception as cache_error:
-                logger.warning(f"Cache set failed: {cache_error}")
-        return result
+        return history or []
     except Exception as e:
         logger.error(f"Error fetching district history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
