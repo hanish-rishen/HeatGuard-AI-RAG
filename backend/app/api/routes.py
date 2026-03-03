@@ -60,8 +60,17 @@ from app.services.prescriptive_engine import prescriptive_engine
 from app.services.data_fetcher import data_fetcher
 from app.services.db_manager import db_manager
 from app.services.nfhs_service import nfhs_service
-from app.services.cache_manager import cache_manager
 from app.core.config import get_settings
+
+# Try to import cache manager, fallback to None if not available
+try:
+    from app.services.cache_manager import cache_manager
+
+    CACHE_ENABLED = True
+except Exception as e:
+    logger.warning(f"Cache manager not available: {e}")
+    cache_manager = None
+    CACHE_ENABLED = False
 
 router = APIRouter()
 settings = get_settings()
@@ -602,24 +611,34 @@ async def get_district_rankings(_: dict = Depends(require_auth)):
             today_str = datetime.now().strftime("%Y-%m-%d")
 
             # 0. Check Redis cache first (fastest)
-            cached_rankings = cache_manager.get_rankings(today_str)
-            if cached_rankings:
-                logger.info(f"Found {len(cached_rankings)} rankings in Redis cache")
-                yield f"data: {json.dumps({'type': 'log', 'message': 'Retrieved rankings from cache.'})}\n\n"
+            if CACHE_ENABLED and cache_manager:
+                try:
+                    cached_rankings = cache_manager.get_rankings(today_str)
+                    if cached_rankings:
+                        logger.info(
+                            f"Found {len(cached_rankings)} rankings in Redis cache"
+                        )
+                        yield f"data: {json.dumps({'type': 'log', 'message': 'Retrieved rankings from cache.'})}\n\n"
 
-                nfhs_service.attach_mortality_risk(cached_rankings)
-                cached_rankings.sort(key=lambda x: x["risk_score"], reverse=True)
+                        nfhs_service.attach_mortality_risk(cached_rankings)
+                        cached_rankings.sort(
+                            key=lambda x: x["risk_score"], reverse=True
+                        )
 
-                final_response = {
-                    "date": today_str,
-                    "total_districts": len(cached_rankings),
-                    "rankings": cached_rankings,
-                    "cached": True,
-                    "compute_time": 0,
-                }
-                yield f"data: {json.dumps({'type': 'result', 'data': final_response})}\n\n"
-                yield f"data: {json.dumps({'type': 'complete'})}\n\n"
-                return
+                        final_response = {
+                            "date": today_str,
+                            "total_districts": len(cached_rankings),
+                            "rankings": cached_rankings,
+                            "cached": True,
+                            "compute_time": 0,
+                        }
+                        yield f"data: {json.dumps({'type': 'result', 'data': final_response})}\n\n"
+                        yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+                        return
+                except Exception as cache_error:
+                    logger.warning(
+                        f"Cache error (proceeding without cache): {cache_error}"
+                    )
 
             # 1. Check if FRESH data for today already exists (computed in last 30 min)
             existing_results = db_manager.get_results_for_date(today_str)
@@ -640,8 +659,12 @@ async def get_district_rankings(_: dict = Depends(require_auth)):
                 nfhs_service.attach_mortality_risk(existing_results)
                 existing_results.sort(key=lambda x: x["risk_score"], reverse=True)
 
-                # Cache in Redis for next time
-                cache_manager.set_rankings(today_str, existing_results)
+                # Cache in Redis for next time (if available)
+                if CACHE_ENABLED and cache_manager:
+                    try:
+                        cache_manager.set_rankings(today_str, existing_results)
+                    except Exception as cache_error:
+                        logger.warning(f"Failed to cache rankings: {cache_error}")
 
                 final_response = {
                     "date": today_str,
@@ -801,8 +824,12 @@ async def get_district_rankings(_: dict = Depends(require_auth)):
             nfhs_service.attach_mortality_risk(results)
             results.sort(key=lambda x: x["risk_score"], reverse=True)
 
-            # Cache results in Redis for fast retrieval
-            cache_manager.set_rankings(today_str, results)
+            # Cache results in Redis for fast retrieval (if available)
+            if CACHE_ENABLED and cache_manager:
+                try:
+                    cache_manager.set_rankings(today_str, results)
+                except Exception as cache_error:
+                    logger.warning(f"Failed to cache results: {cache_error}")
 
             compute_time = time.time() - start_time
             logger.info(
@@ -840,13 +867,17 @@ async def get_mortality_risk():
     PURPOSE: Combine HeatGuard heat risk with NFHS disease indicators for mortality risk.
     """
     try:
-        # Try cache first
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        cache_key = f"mortality_risk:{today_str}"
-        cached = cache_manager.get(cache_key)
-        if cached:
-            logger.info("Returning cached mortality risk data")
-            return MortalityRiskResponse(**cached)
+        # Try cache first (if available)
+        if CACHE_ENABLED and cache_manager:
+            try:
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                cache_key = f"mortality_risk:{today_str}"
+                cached = cache_manager.get(cache_key)
+                if cached:
+                    logger.info("Returning cached mortality risk data")
+                    return MortalityRiskResponse(**cached)
+            except Exception as cache_error:
+                logger.warning(f"Cache error (proceeding without cache): {cache_error}")
 
         # Fetch from database
         conn = db_manager.get_connection()
@@ -881,8 +912,14 @@ async def get_mortality_risk():
             total_districts=len(items), as_of_date=latest_date, items=items
         )
 
-        # Cache the response
-        cache_manager.set(cache_key, response.dict(), ttl=3600)  # Cache for 1 hour
+        # Cache the response (if available)
+        if CACHE_ENABLED and cache_manager:
+            try:
+                cache_manager.set(
+                    cache_key, response.dict(), ttl=3600
+                )  # Cache for 1 hour
+            except Exception as cache_error:
+                logger.warning(f"Failed to cache mortality risk: {cache_error}")
 
         return response
     except Exception as e:
