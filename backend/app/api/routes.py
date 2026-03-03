@@ -287,6 +287,36 @@ async def system_status():
     return status
 
 
+@router.post("/admin/clear-cache")
+async def clear_cache(_: dict = Depends(require_auth)):
+    """
+    PURPOSE: Clear Redis cache to force fresh data fetch.
+    """
+    try:
+        from datetime import datetime
+
+        cleared = []
+        today_str = datetime.now().strftime("%Y-%m-%d")
+
+        # Clear today's rankings cache
+        if CACHE_ENABLED and cache_manager:
+            cache_manager.delete(f"rankings:{today_str}")
+            cleared.append(f"rankings:{today_str}")
+
+            # Clear mortality risk cache
+            cache_manager.delete(f"mortality_risk:{today_str}")
+            cleared.append(f"mortality_risk:{today_str}")
+
+            # Clear all history caches
+            cache_manager.clear_pattern("history:*")
+            cleared.append("history:*")
+
+        return {"message": "Cache cleared successfully", "cleared_keys": cleared}
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/auth/login", response_model=TokenResponse)
 async def login(request: LoginRequest):
     # Debug logging for auth issues

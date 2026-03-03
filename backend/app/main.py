@@ -72,6 +72,25 @@ async def background_init():
         print(f"[{settings.app_name}] Warning: Scheduler failed: {e}", flush=True)
         # Continue - we'll check for data separately
 
+    # Clear any stale Redis cache to ensure fresh data is served
+    try:
+        from datetime import datetime
+        from app.services.cache_manager import cache_manager, USE_REDIS
+
+        if USE_REDIS and cache_manager:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            # Invalidate today's rankings cache
+            cache_manager.delete(f"rankings:{today_str}")
+            print(
+                f"[{settings.app_name}] Cleared stale Redis cache for {today_str}",
+                flush=True,
+            )
+    except Exception as cache_error:
+        print(
+            f"[{settings.app_name}] Warning: Could not clear cache: {cache_error}",
+            flush=True,
+        )
+
     # Wait for data to be ready (ensure ALL districts are computed)
     try:
         from datetime import datetime
