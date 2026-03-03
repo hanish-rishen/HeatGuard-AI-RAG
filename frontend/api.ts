@@ -272,5 +272,8 @@ export const HeatGuardAPI = {
     },
 };
 
+// Export API_BASE_URL for use in other components
+export { API_BASE_URL };
+
 
 
