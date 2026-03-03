@@ -19,15 +19,19 @@ from app.api.routes import router as api_router
 
 settings = get_settings()
 
+# Global flag to track server readiness
+_server_ready = False
+
 
 async def background_init():
     """Initialize heavy resources in background to prevent startup timeout."""
+    global _server_ready
     import asyncio
 
     # Wait a bit for server to fully start accepting requests
     await asyncio.sleep(2)
 
-    print(f"[{settings.app_name}] Background init starting...")
+    print(f"[{settings.app_name}] Background init starting...", flush=True)
 
     # Pre-load ML models
     try:
@@ -39,11 +43,12 @@ async def background_init():
         _ = prescriptive_engine.is_initialized()
         _ = data_fetcher.get_all_districts()
 
-        print(f"[{settings.app_name}] All engines loaded!")
+        print(f"[{settings.app_name}] All engines loaded!", flush=True)
     except Exception as e:
-        print(f"[{settings.app_name}] Warning: Engine load failed: {e}")
+        print(f"[{settings.app_name}] Warning: Engine load failed: {e}", flush=True)
+        return  # Don't mark ready if engines failed
 
-    # Start scheduler
+    # Start scheduler and run initial computation (only if needed - saves Leapcell resources)
     try:
         from app.scheduler import (
             setup_scheduler,
@@ -53,11 +58,84 @@ async def background_init():
 
         setup_scheduler()
         start_scheduler()
-        await run_initial_computation_if_needed()
 
-        print(f"[{settings.app_name}] Scheduler started!")
+        # Only compute if data is missing or stale (saves Leapcell resources)
+        print(f"[{settings.app_name}] Checking for existing data...", flush=True)
+        await run_initial_computation_if_needed()
+        print(f"[{settings.app_name}] Data check complete!", flush=True)
+
+        # Small delay to ensure database transaction is fully committed
+        await asyncio.sleep(1)
+
+        print(f"[{settings.app_name}] Scheduler started!", flush=True)
     except Exception as e:
-        print(f"[{settings.app_name}] Warning: Scheduler failed: {e}")
+        print(f"[{settings.app_name}] Warning: Scheduler failed: {e}", flush=True)
+        # Continue - we'll check for data separately
+
+    # Wait for data to be ready (ensure ALL districts are computed)
+    try:
+        from datetime import datetime
+        from app.services.db_manager import db_manager
+        from app.services.data_fetcher import data_fetcher
+
+        print(
+            f"[{settings.app_name}] Waiting for data computation to complete...",
+            flush=True,
+        )
+
+        # Get expected district count
+        all_districts = data_fetcher.get_all_districts()
+        expected_count = len(all_districts)
+        print(
+            f"[{settings.app_name}] Expecting {expected_count} districts...",
+            flush=True,
+        )
+
+        # Poll every 2 seconds for up to 2 minutes
+        max_wait_seconds = 120
+        poll_interval = 2
+        waited = 0
+
+        while waited < max_wait_seconds:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            existing = db_manager.get_results_for_date(today_str)
+            existing_count = len(existing) if existing else 0
+
+            # Check if we have ALL districts (or at least 95% to account for data issues)
+            if existing_count >= expected_count * 0.95:
+                # All data ready! Mark server as ready
+                print(
+                    f"[{settings.app_name}] Server is fully ready! ({existing_count}/{expected_count} districts loaded)",
+                    flush=True,
+                )
+                _server_ready = True
+                break
+            elif existing_count > 0:
+                # Partial data - still computing
+                print(
+                    f"[{settings.app_name}] Data loading... ({existing_count}/{expected_count} districts)",
+                    flush=True,
+                )
+
+            # Wait and try again
+            await asyncio.sleep(poll_interval)
+            waited += poll_interval
+
+            if waited % 10 == 0:
+                print(
+                    f"[{settings.app_name}] Still waiting for data... ({waited}s)",
+                    flush=True,
+                )
+
+        if not _server_ready:
+            print(
+                f"[{settings.app_name}] Warning: Timed out waiting for data. Server NOT ready.",
+                flush=True,
+            )
+            # Don't mark ready - let the frontend keep polling
+
+    except Exception as e:
+        print(f"[{settings.app_name}] Warning: Data check failed: {e}", flush=True)
 
 
 @asynccontextmanager
@@ -67,11 +145,11 @@ async def lifespan(app: FastAPI):
     WHY: Fast startup, heavy init done in background.
     """
     # --- Startup ---
-    print(f"[{settings.app_name}] Starting up...")
+    print(f"[{settings.app_name}] Starting up...", flush=True)
 
     # Start background initialization (doesn't block startup)
     asyncio.create_task(background_init())
-    print(f"[{settings.app_name}] Background init started...")
+    print(f"[{settings.app_name}] Background init started...", flush=True)
 
     yield
 
@@ -126,7 +204,29 @@ async def root():
 @app.get("/kaithheathcheck")
 @app.head("/kaithheathcheck")  # Support HEAD for UptimeRobot
 async def healthcheck():
-    return {"status": "ok"}
+    global _server_ready
+
+    # Check data availability and freshness
+    data_count = 0
+    is_fresh = False
+    try:
+        from datetime import datetime
+        from app.services.db_manager import db_manager
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        existing = db_manager.get_results_for_date(today_str)
+        data_count = len(existing) if existing else 0
+        is_fresh = db_manager.has_fresh_data(max_age_minutes=30)
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "ready": _server_ready,
+        "data_available": data_count > 0 and is_fresh,
+        "data_fresh": is_fresh,
+        "districts_loaded": data_count,
+    }
 
 
 if __name__ == "__main__":

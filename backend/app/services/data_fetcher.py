@@ -445,8 +445,8 @@ class DataFetcher:
         if not uncached_districts:
             return results
 
-        # Process uncached districts in batches of 50
-        batch_size = 50
+        # Process uncached districts in batches of 25 (reduced to avoid rate limiting)
+        batch_size = 25
         for i in range(0, len(uncached_districts), batch_size):
             batch = uncached_districts[i : i + batch_size]
             batch_results = await self._fetch_weather_batch_api(batch, req_date)
@@ -456,6 +456,10 @@ class DataFetcher:
             for district_name, weather_data in batch_results.items():
                 if weather_data:
                     self._set_cached_weather(district_name, req_date, weather_data)
+
+            # Add delay between batches to avoid rate limiting (Open-Meteo limit)
+            if i + batch_size < len(uncached_districts):
+                await asyncio.sleep(1.0)  # 1 second delay between batches
 
         return results
 

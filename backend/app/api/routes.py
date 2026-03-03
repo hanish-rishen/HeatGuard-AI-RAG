@@ -60,6 +60,7 @@ from app.services.prescriptive_engine import prescriptive_engine
 from app.services.data_fetcher import data_fetcher
 from app.services.db_manager import db_manager
 from app.services.nfhs_service import nfhs_service
+from app.services.cache_manager import cache_manager
 from app.core.config import get_settings
 
 router = APIRouter()
@@ -600,19 +601,47 @@ async def get_district_rankings(_: dict = Depends(require_auth)):
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
 
-            # 1. Check if data for today already exists
+            # 0. Check Redis cache first (fastest)
+            cached_rankings = cache_manager.get_rankings(today_str)
+            if cached_rankings:
+                logger.info(f"Found {len(cached_rankings)} rankings in Redis cache")
+                yield f"data: {json.dumps({'type': 'log', 'message': 'Retrieved rankings from cache.'})}\n\n"
+
+                nfhs_service.attach_mortality_risk(cached_rankings)
+                cached_rankings.sort(key=lambda x: x["risk_score"], reverse=True)
+
+                final_response = {
+                    "date": today_str,
+                    "total_districts": len(cached_rankings),
+                    "rankings": cached_rankings,
+                    "cached": True,
+                    "compute_time": 0,
+                }
+                yield f"data: {json.dumps({'type': 'result', 'data': final_response})}\n\n"
+                yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+                return
+
+            # 1. Check if FRESH data for today already exists (computed in last 30 min)
             existing_results = db_manager.get_results_for_date(today_str)
             all_districts = data_fetcher.get_all_districts()
+            has_fresh = db_manager.has_fresh_data(max_age_minutes=30)
 
-            # If we have results for ALL districts (or at least 95%)
-            if existing_results and len(existing_results) >= len(all_districts) * 0.95:
+            # If we have FRESH results for ALL districts (or at least 95%)
+            if (
+                has_fresh
+                and existing_results
+                and len(existing_results) >= len(all_districts) * 0.95
+            ):
                 logger.info(
-                    f"Found {len(existing_results)} cached results for {today_str}"
+                    f"Found {len(existing_results)} fresh cached results for {today_str}"
                 )
                 yield f"data: {json.dumps({'type': 'log', 'message': 'Retrieved cached analysis for today.'})}\n\n"
 
                 nfhs_service.attach_mortality_risk(existing_results)
                 existing_results.sort(key=lambda x: x["risk_score"], reverse=True)
+
+                # Cache in Redis for next time
+                cache_manager.set_rankings(today_str, existing_results)
 
                 final_response = {
                     "date": today_str,
@@ -624,6 +653,12 @@ async def get_district_rankings(_: dict = Depends(require_auth)):
                 yield f"data: {json.dumps({'type': 'result', 'data': final_response})}\n\n"
                 yield f"data: {json.dumps({'type': 'complete'})}\n\n"
                 return
+
+            # Data exists but is stale - log it and continue to recompute
+            if existing_results and len(existing_results) > 0:
+                logger.info(
+                    f"Found {len(existing_results)} stale results, recomputing..."
+                )
 
             # 2. If Partial or No data, run analysis
             if not all_districts:
@@ -766,6 +801,9 @@ async def get_district_rankings(_: dict = Depends(require_auth)):
             nfhs_service.attach_mortality_risk(results)
             results.sort(key=lambda x: x["risk_score"], reverse=True)
 
+            # Cache results in Redis for fast retrieval
+            cache_manager.set_rankings(today_str, results)
+
             compute_time = time.time() - start_time
             logger.info(
                 f"Rankings computed in {compute_time:.2f}s for {len(results)} districts"
@@ -802,6 +840,15 @@ async def get_mortality_risk():
     PURPOSE: Combine HeatGuard heat risk with NFHS disease indicators for mortality risk.
     """
     try:
+        # Try cache first
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        cache_key = f"mortality_risk:{today_str}"
+        cached = cache_manager.get(cache_key)
+        if cached:
+            logger.info("Returning cached mortality risk data")
+            return MortalityRiskResponse(**cached)
+
+        # Fetch from database
         conn = db_manager.get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -830,9 +877,14 @@ async def get_mortality_risk():
             )
 
         items.sort(key=lambda x: x.mortality_risk_score, reverse=True)
-        return MortalityRiskResponse(
+        response = MortalityRiskResponse(
             total_districts=len(items), as_of_date=latest_date, items=items
         )
+
+        # Cache the response
+        cache_manager.set(cache_key, response.dict(), ttl=3600)  # Cache for 1 hour
+
+        return response
     except Exception as e:
         logger.error(f"Failed to compute mortality risk: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -850,6 +902,13 @@ async def get_district_history(
         even when some days are missing or a district wasn't processed every day.
     """
     try:
+        # Try cache first
+        cache_key = f"history:{district_name}:{limit}"
+        cached = cache_manager.get(cache_key)
+        if cached:
+            logger.info(f"Returning cached history for {district_name}")
+            return cached
+
         history = db_manager.get_district_history(district_name, limit=limit)
 
         # Dev-friendly behavior: if we have < 7 days of history, generate a deterministic
@@ -886,10 +945,15 @@ async def get_district_history(
                         "lst": base_lst + wob,
                     }
                 )
+            # Cache the generated history
+            cache_manager.set(cache_key, out, ttl=3600)
             return out
 
         # If no history, return empty list (client handles it)
-        return history or []
+        result = history or []
+        if result:
+            cache_manager.set(cache_key, result, ttl=3600)
+        return result
     except Exception as e:
         logger.error(f"Error fetching district history: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,12 +1,30 @@
-import sqlite3
-from datetime import datetime
+"""
+Database Manager - Supports SQLite (local dev) and PostgreSQL (Leapcell production)
+"""
+
+import os
 import json
-from pathlib import Path
-from typing import List, Dict, Optional
-from app.core.config import get_backend_dir
 import logging
+from datetime import datetime
+from typing import List, Dict, Optional, Any
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+# Database type detection
+USE_POSTGRES = os.getenv("DATABASE_URL", "").startswith("postgresql")
+
+if USE_POSTGRES:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor, execute_values
+
+    logger.info("Using PostgreSQL database")
+else:
+    import sqlite3
+    from pathlib import Path
+    from app.core.config import get_backend_dir
+
+    logger.info("Using SQLite database")
 
 
 class DBManager:
@@ -24,233 +42,199 @@ class DBManager:
             self.init_db()
             self._initialized = True
 
-    def init_db(self):
-        # Use backend directory for database (cross-platform compatible)
-        import tempfile
-        import os
-
-        # Try different locations in order of preference
-        if os.name == "nt":  # Windows
-            # On Windows, use the backend directory
-            self.db_path = get_backend_dir() / "district_analytics.db"
+    def _get_connection(self):
+        """Get database connection based on configuration."""
+        if USE_POSTGRES:
+            database_url = os.getenv("DATABASE_URL")
+            return psycopg2.connect(database_url)
         else:
-            # On Linux/Mac, try /tmp first, then fallback to backend dir
-            tmp_path = Path("/tmp") / "district_analytics.db"
-            try:
-                # Test if /tmp is writable
-                tmp_path.parent.mkdir(parents=True, exist_ok=True)
-                test_file = tmp_path.parent / ".write_test"
-                test_file.touch()
-                test_file.unlink()
-                self.db_path = tmp_path
-            except (OSError, PermissionError):
-                # Fallback to backend directory
-                self.db_path = get_backend_dir() / "district_analytics.db"
+            # SQLite fallback for local development
+            import tempfile
+            import os as os_module
 
-        logger.info(f"Using database at: {self.db_path}")
+            if os_module.name == "nt":  # Windows
+                db_path = Path(get_backend_dir()) / "district_analytics.db"
+            else:
+                tmp_path = Path("/tmp") / "district_analytics.db"
+                try:
+                    tmp_path.parent.mkdir(parents=True, exist_ok=True)
+                    test_file = tmp_path.parent / ".write_test"
+                    test_file.touch()
+                    test_file.unlink()
+                    db_path = tmp_path
+                except (OSError, PermissionError):
+                    db_path = Path(get_backend_dir()) / "district_analytics.db"
 
+            return sqlite3.connect(db_path)
+
+    def init_db(self):
+        """Initialize database schema."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_connection()
             cursor = conn.cursor()
 
-            # Create table for daily analysis results
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS daily_analysis (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date TEXT NOT NULL,
-                    district_name TEXT NOT NULL,
-                    lat REAL,
-                    lon REAL,
-                    risk_score REAL,
-                    risk_status TEXT,
-                    heat_index REAL,
-                    max_temp REAL,
-                    humidity REAL,
-                    lst REAL,
-                    pct_children REAL,
-                    pct_outdoor_workers REAL,
-                    pct_vulnerable_social REAL,
-                    UNIQUE(date, district_name)
-                )
-            """)
+            if USE_POSTGRES:
+                # PostgreSQL schema
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS daily_analysis (
+                        id SERIAL PRIMARY KEY,
+                        date DATE NOT NULL,
+                        computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        district_name VARCHAR(255) NOT NULL,
+                        lat REAL,
+                        lon REAL,
+                        risk_score REAL,
+                        risk_status VARCHAR(50),
+                        heat_index REAL,
+                        max_temp REAL,
+                        humidity REAL,
+                        lst REAL,
+                        pct_children REAL,
+                        pct_outdoor_workers REAL,
+                        pct_vulnerable_social REAL,
+                        UNIQUE(date, district_name)
+                    )
+                """)
 
-            # Migration: ensure lat/lon columns exist for older DBs
-            try:
-                cursor.execute("ALTER TABLE daily_analysis ADD COLUMN lat REAL")
-            except sqlite3.OperationalError:
-                pass
-            try:
-                cursor.execute("ALTER TABLE daily_analysis ADD COLUMN lon REAL")
-            except sqlite3.OperationalError:
-                pass
-
-            # Create table for uploaded files metadata
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS uploaded_files (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    filename TEXT NOT NULL,
-                    upload_date TEXT NOT NULL,
-                    size_bytes INTEGER,
-                    content_type TEXT,
-                    description TEXT,
-                    status TEXT DEFAULT 'Processing',
-                    UNIQUE(filename)
-                )
-            """)
-
-            # Migration: Ensure status column exists (for existing dbs)
-            try:
-                cursor.execute(
-                    "ALTER TABLE uploaded_files ADD COLUMN status TEXT DEFAULT 'Indexed'"
-                )
-            except sqlite3.OperationalError:
-                pass  # Column exists
+                # Create index for faster queries
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_daily_analysis_date 
+                    ON daily_analysis(date)
+                """)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_daily_analysis_computed 
+                    ON daily_analysis(computed_at)
+                """)
+            else:
+                # SQLite schema
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS daily_analysis (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        date TEXT NOT NULL,
+                        computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        district_name TEXT NOT NULL,
+                        lat REAL,
+                        lon REAL,
+                        risk_score REAL,
+                        risk_status TEXT,
+                        heat_index REAL,
+                        max_temp REAL,
+                        humidity REAL,
+                        lst REAL,
+                        pct_children REAL,
+                        pct_outdoor_workers REAL,
+                        pct_vulnerable_social REAL,
+                        UNIQUE(date, district_name)
+                    )
+                """)
 
             conn.commit()
             conn.close()
-            logger.info(f"Database initialized at {self.db_path}")
+            logger.info("Database initialized successfully")
+
         except Exception as e:
-            logger.error(f"Failed to initialize database: {e}")
+            logger.error(f"Error initializing database: {e}")
+            raise
 
     def get_connection(self):
+        """Get a database connection."""
         self._ensure_initialized()
-        return sqlite3.connect(self.db_path)
-
-    def get_results_for_date(self, date_str: str) -> List[Dict]:
-        """Fetch all results for a specific date."""
-        self._ensure_initialized()
-        try:
-            conn = self.get_connection()
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-
-            cursor.execute("SELECT * FROM daily_analysis WHERE date = ?", (date_str,))
-            rows = cursor.fetchall()
-            conn.close()
-
-            results = []
-            for row in rows:
-                results.append(dict(row))
-            return results
-        except Exception as e:
-            logger.error(f"Error fetching results: {e}")
-            return []
-
-    def get_all_files(self) -> List[Dict]:
-        """Fetch all uploaded files metadata."""
-        self._ensure_initialized()
-        try:
-            conn = self.get_connection()
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-
-            cursor.execute("SELECT * FROM uploaded_files ORDER BY upload_date DESC")
-            rows = cursor.fetchall()
-            conn.close()
-
-            results = []
-            for row in rows:
-                results.append(dict(row))
-            return results
-        except Exception as e:
-            logger.error(f"Error fetching files: {e}")
-            return []
-
-    def save_file_metadata(self, data: Dict):
-        """Save metadata for an uploaded file."""
-        self._ensure_initialized()
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO uploaded_files (
-                    filename, upload_date, size_bytes, content_type, description, status
-                ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    data["filename"],
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    data.get("size_bytes", 0),
-                    data.get("content_type", "unknown"),
-                    data.get("description", ""),
-                    data.get("status", "Processing"),
-                ),
-            )
-
-            conn.commit()
-            conn.close()
-            logger.info(f"Saved metadata for file {data['filename']}")
-        except Exception as e:
-            logger.error(f"Failed to save file metadata: {e}")
-            raise e
+        return self._get_connection()
 
     def save_result(self, data: Dict):
         """Save a single district analysis result."""
         self._ensure_initialized()
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO daily_analysis (
-                    date, district_name, lat, lon, risk_score, risk_status, heat_index,
-                    max_temp, humidity, lst, pct_children, pct_outdoor_workers, pct_vulnerable_social
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    datetime.now().strftime("%Y-%m-%d"),
-                    data["district_name"],
-                    data.get("lat"),
-                    data.get("lon"),
-                    data["risk_score"],
-                    data["risk_status"],
-                    data["heat_index"],
-                    data["max_temp"],
-                    data["humidity"],
-                    data["lst"],
-                    data["pct_children"],
-                    data["pct_outdoor_workers"],
-                    data["pct_vulnerable_social"],
-                ),
-            )
-
-            conn.commit()
-            conn.close()
-            # logger.info(f"Saved result for {data['district_name']}")
-        except Exception as e:
-            logger.error(f"Error saving result for {data.get('district_name')}: {e}")
-
-    def save_results_bulk(self, results: List[Dict]) -> int:
-        """Bulk insert multiple district results in a single transaction.
-
-        This is ~65x faster than individual inserts for 640 districts:
-        - Individual: 640 commits × 15ms = ~9.6s
-        - Bulk: 1 commit = ~0.15s
-
-        Args:
-            results: List of district result dictionaries
-
-        Returns:
-            Number of records inserted
-        """
-        if not results:
-            return 0
-
-        self._ensure_initialized()
-
-        try:
-            conn = self.get_connection()
+            conn = self._get_connection()
             cursor = conn.cursor()
 
             today = datetime.now().strftime("%Y-%m-%d")
 
-            # Prepare records for bulk insert
+            if USE_POSTGRES:
+                cursor.execute(
+                    """
+                    INSERT INTO daily_analysis (
+                        date, computed_at, district_name, lat, lon, risk_score, risk_status, heat_index,
+                        max_temp, humidity, lst, pct_children, pct_outdoor_workers, pct_vulnerable_social
+                    ) VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (date, district_name) DO UPDATE SET
+                        computed_at = NOW(),
+                        lat = EXCLUDED.lat,
+                        lon = EXCLUDED.lon,
+                        risk_score = EXCLUDED.risk_score,
+                        risk_status = EXCLUDED.risk_status,
+                        heat_index = EXCLUDED.heat_index,
+                        max_temp = EXCLUDED.max_temp,
+                        humidity = EXCLUDED.humidity,
+                        lst = EXCLUDED.lst,
+                        pct_children = EXCLUDED.pct_children,
+                        pct_outdoor_workers = EXCLUDED.pct_outdoor_workers,
+                        pct_vulnerable_social = EXCLUDED.pct_vulnerable_social
+                """,
+                    (
+                        today,
+                        data["district_name"],
+                        data.get("lat"),
+                        data.get("lon"),
+                        data["risk_score"],
+                        data["risk_status"],
+                        data["heat_index"],
+                        data["max_temp"],
+                        data["humidity"],
+                        data["lst"],
+                        data["pct_children"],
+                        data["pct_outdoor_workers"],
+                        data["pct_vulnerable_social"],
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO daily_analysis (
+                        date, computed_at, district_name, lat, lon, risk_score, risk_status, heat_index,
+                        max_temp, humidity, lst, pct_children, pct_outdoor_workers, pct_vulnerable_social
+                    ) VALUES (?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        today,
+                        data["district_name"],
+                        data.get("lat"),
+                        data.get("lon"),
+                        data["risk_score"],
+                        data["risk_status"],
+                        data["heat_index"],
+                        data["max_temp"],
+                        data["humidity"],
+                        data["lst"],
+                        data["pct_children"],
+                        data["pct_outdoor_workers"],
+                        data["pct_vulnerable_social"],
+                    ),
+                )
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error saving result for {data.get('district_name')}: {e}")
+
+    def save_results_bulk(self, results: List[Dict]) -> int:
+        """Save multiple district results efficiently using bulk insert."""
+        self._ensure_initialized()
+        if not results:
+            return 0
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # Prepare records
             records = [
                 (
                     today,
+                    now_str,
                     r["district_name"],
                     r.get("lat"),
                     r.get("lon"),
@@ -267,16 +251,43 @@ class DBManager:
                 for r in results
             ]
 
-            # Execute bulk insert
-            cursor.executemany(
-                """
-                INSERT OR REPLACE INTO daily_analysis (
-                    date, district_name, lat, lon, risk_score, risk_status, heat_index,
-                    max_temp, humidity, lst, pct_children, pct_outdoor_workers, pct_vulnerable_social
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            if USE_POSTGRES:
+                # Use PostgreSQL's execute_values for bulk insert
+                execute_values(
+                    cursor,
+                    """
+                    INSERT INTO daily_analysis (
+                        date, computed_at, district_name, lat, lon, risk_score, risk_status, heat_index,
+                        max_temp, humidity, lst, pct_children, pct_outdoor_workers, pct_vulnerable_social
+                    ) VALUES %s
+                    ON CONFLICT (date, district_name) DO UPDATE SET
+                        computed_at = EXCLUDED.computed_at,
+                        lat = EXCLUDED.lat,
+                        lon = EXCLUDED.lon,
+                        risk_score = EXCLUDED.risk_score,
+                        risk_status = EXCLUDED.risk_status,
+                        heat_index = EXCLUDED.heat_index,
+                        max_temp = EXCLUDED.max_temp,
+                        humidity = EXCLUDED.humidity,
+                        lst = EXCLUDED.lst,
+                        pct_children = EXCLUDED.pct_children,
+                        pct_outdoor_workers = EXCLUDED.pct_outdoor_workers,
+                        pct_vulnerable_social = EXCLUDED.pct_vulnerable_social
+                    """,
+                    records,
+                    page_size=100,
+                )
+            else:
+                # SQLite bulk insert
+                cursor.executemany(
+                    """
+                    INSERT OR REPLACE INTO daily_analysis (
+                        date, computed_at, district_name, lat, lon, risk_score, risk_status, heat_index,
+                        max_temp, humidity, lst, pct_children, pct_outdoor_workers, pct_vulnerable_social
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                records,
-            )
+                    records,
+                )
 
             conn.commit()
             conn.close()
@@ -288,69 +299,136 @@ class DBManager:
             logger.error(f"Error in bulk save: {e}")
             return 0
 
-    def get_district_history(self, district_name: str, limit: int = 30) -> List[Dict]:
-        """Fetch historical data for a district.
-
-        Returns recent rows ordered by date so the UI can show a multi-day trend.
-        Note: we intentionally avoid `GROUP BY date` here because in SQLite it's non-deterministic
-        without aggregates and can collapse history unexpectedly.
-        """
+    def get_results_for_date(self, date_str: str) -> List[Dict]:
+        """Fetch all results for a specific date."""
         self._ensure_initialized()
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = self._get_connection()
 
-            cursor.execute(
-                """
-        SELECT date, risk_score, heat_index, max_temp, humidity, lst
-        FROM daily_analysis
-        WHERE district_name = ?
-        ORDER BY date DESC, id DESC
-        LIMIT ?
-            """,
-                (district_name, limit),
-            )
+            if USE_POSTGRES:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                cursor.execute(
+                    "SELECT * FROM daily_analysis WHERE date = %s", (date_str,)
+                )
+                rows = cursor.fetchall()
+                conn.close()
+                return [dict(row) for row in rows]
+            else:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT * FROM daily_analysis WHERE date = ?", (date_str,)
+                )
+                rows = cursor.fetchall()
+                conn.close()
+                return [dict(row) for row in rows]
+
+        except Exception as e:
+            logger.error(f"Error fetching results: {e}")
+            return []
+
+    def get_result_for_district(
+        self, district_name: str, date_str: str
+    ) -> Optional[Dict]:
+        """Fetch result for a specific district and date."""
+        self._ensure_initialized()
+        try:
+            conn = self._get_connection()
+
+            if USE_POSTGRES:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                cursor.execute(
+                    "SELECT * FROM daily_analysis WHERE district_name = %s AND date = %s",
+                    (district_name, date_str),
+                )
+            else:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT * FROM daily_analysis WHERE district_name = ? AND date = ?",
+                    (district_name, date_str),
+                )
+
+            row = cursor.fetchone()
+            conn.close()
+
+            return dict(row) if row else None
+
+        except Exception as e:
+            logger.error(f"Error fetching district result: {e}")
+            return None
+
+    def get_district_history(self, district_name: str, days: int = 60) -> List[Dict]:
+        """Fetch historical data for a district."""
+        self._ensure_initialized()
+        try:
+            conn = self._get_connection()
+
+            if USE_POSTGRES:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                cursor.execute(
+                    """
+                    SELECT * FROM daily_analysis 
+                    WHERE district_name = %s 
+                    ORDER BY date DESC 
+                    LIMIT %s
+                """,
+                    (district_name, days),
+                )
+            else:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT * FROM daily_analysis 
+                    WHERE district_name = ? 
+                    ORDER BY date DESC 
+                    LIMIT ?
+                """,
+                    (district_name, days),
+                )
 
             rows = cursor.fetchall()
             conn.close()
-
-            # Return reversed to show timeline correctly (oldest to newest)
-            return [dict(row) for row in rows][::-1]
+            return [dict(row) for row in rows]
 
         except Exception as e:
-            logger.error(f"Error fetching history for {district_name}: {e}")
+            logger.error(f"Error fetching district history: {e}")
             return []
 
-    def update_file_status(self, filename: str, status: str):
-        """Update the processing status of a file."""
+    def has_fresh_data(self, max_age_minutes: int = 30) -> bool:
+        """Check if we have data computed within the last N minutes."""
         self._ensure_initialized()
         try:
-            conn = self.get_connection()
+            conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE uploaded_files SET status = ? WHERE filename = ?",
-                (status, filename),
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.error(f"Failed to update status for {filename}: {e}")
 
-    def delete_file_metadata(self, filename: str) -> bool:
-        """Delete metadata for a file."""
-        self._ensure_initialized()
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM uploaded_files WHERE filename = ?", (filename,))
-            rows = cursor.rowcount
-            conn.commit()
+            if USE_POSTGRES:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) FROM daily_analysis
+                    WHERE computed_at >= NOW() - INTERVAL '%s minutes'
+                """,
+                    (max_age_minutes,),
+                )
+            else:
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM daily_analysis
+                    WHERE computed_at >= datetime('now', '-{max_age_minutes} minutes')
+                """)
+
+            count = cursor.fetchone()[0]
             conn.close()
-            return rows > 0
+
+            logger.info(
+                f"Fresh data check: {count} records computed within last {max_age_minutes} minutes"
+            )
+            return count > 0
+
         except Exception as e:
-            logger.error(f"Failed to delete metadata for {filename}: {e}")
+            logger.error(f"Error checking fresh data: {e}")
             return False
 
 
+# Global instance
 db_manager = DBManager()

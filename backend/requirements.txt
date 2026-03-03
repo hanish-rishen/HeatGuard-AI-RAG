@@ -43,3 +43,9 @@ sentence-transformers==3.4.0
 easyocr
 pymupdf
 Pillow
+
+# Database (PostgreSQL for Leapcell)
+psycopg2-binary==2.9.9
+
+# Caching (Redis for Leapcell)
+redis==5.0.1

@@ -2,6 +2,22 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Zap, Lock } from 'lucide-react';
 import { HeatGuardAPI } from '../api';
+import { ServerWakeUp } from '../src/components/ServerWakeUp';
+
+// Get API base URL for server wake-up check
+const getApiBaseUrl = (): string => {
+    const envUrl = import.meta.env.VITE_API_BASE_URL;
+    if (envUrl) {
+        return envUrl;
+    }
+    if (typeof window !== 'undefined') {
+        const { protocol, hostname } = window.location;
+        if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+            return `${protocol}//${hostname}/api`;
+        }
+    }
+    return 'http://localhost:8000/api';
+};
 
 export const LoginPage: React.FC = () => {
     const navigate = useNavigate();
@@ -9,6 +25,8 @@ export const LoginPage: React.FC = () => {
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [showWakeUp, setShowWakeUp] = useState(false);
+    const [wakeUpError, setWakeUpError] = useState<string | null>(null);
 
     const handleSubmit = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -16,13 +34,38 @@ export const LoginPage: React.FC = () => {
         setLoading(true);
         try {
             await HeatGuardAPI.login(username.trim(), password);
-            navigate('/');
+            // Show server wake-up screen instead of immediately navigating
+            setShowWakeUp(true);
         } catch (err: any) {
             setError(err?.response?.data?.detail || 'Login failed. Check your credentials.');
         } finally {
             setLoading(false);
         }
     };
+
+    const handleServerReady = () => {
+        // Server is awake and ready, navigate to dashboard
+        navigate('/');
+    };
+
+    const handleServerError = (error: string) => {
+        setWakeUpError(error);
+        // Still navigate after error - user can retry from dashboard if needed
+        setTimeout(() => {
+            navigate('/');
+        }, 3000);
+    };
+
+    // Show server wake-up screen after successful login
+    if (showWakeUp) {
+        return (
+            <ServerWakeUp
+                apiBaseUrl={getApiBaseUrl()}
+                onReady={handleServerReady}
+                onError={handleServerError}
+            />
+        );
+    }
 
     return (
         <div className="min-h-screen bg-[#0b1220] flex items-center justify-center px-6 py-12 relative overflow-hidden">

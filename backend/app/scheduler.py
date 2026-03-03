@@ -22,13 +22,23 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
 
-async def run_daily_rankings():
-    """Compute rankings for all districts and save to database."""
+async def run_daily_rankings(force: bool = False) -> int:
+    """Compute rankings for all districts and save to database.
+
+    Args:
+        force: If True, recompute all districts even if they already have data.
+
+    Returns:
+        Number of districts processed and saved.
+    """
     logger.info("=" * 60)
     logger.info("Starting daily rankings computation")
+    if force:
+        logger.info("FORCE MODE: Recomputing all districts")
     logger.info("=" * 60)
 
     start_time = datetime.now()
+    total_processed = 0
 
     try:
         # Import here to avoid circular imports
@@ -43,15 +53,21 @@ async def run_daily_rankings():
         all_districts = data_fetcher.get_all_districts()
         logger.info(f"Processing {len(all_districts)} districts")
 
-        # Check which districts already have data
-        existing = db_manager.get_results_for_date(today_str)
-        existing_names = set(r["district_name"] for r in existing)
+        if force:
+            # Force recomputation of all districts
+            districts_to_process = all_districts
+            # Note: We don't delete old data here - INSERT OR REPLACE will overwrite
+            # This ensures the database is never empty during computation
+        else:
+            # Check which districts already have data
+            existing = db_manager.get_results_for_date(today_str)
+            existing_names = set(r["district_name"] for r in existing)
 
-        districts_to_process = [d for d in all_districts if d not in existing_names]
+            districts_to_process = [d for d in all_districts if d not in existing_names]
 
-        if not districts_to_process:
-            logger.info("All districts already computed for today")
-            return
+            if not districts_to_process:
+                logger.info("All districts already computed for today")
+                return len(existing)
 
         logger.info(f"New districts to process: {len(districts_to_process)}")
 
@@ -133,11 +149,14 @@ async def run_daily_rankings():
         # Bulk save all results
         if all_results:
             inserted = db_manager.save_results_bulk(all_results)
+            total_processed = inserted
             logger.info(f"Saved {inserted} district results to database")
 
         duration = (datetime.now() - start_time).total_seconds()
         logger.info(f"Daily computation completed in {duration:.2f}s")
         logger.info("=" * 60)
+
+        return total_processed
 
     except Exception as e:
         logger.error(f"Daily computation failed: {e}")
@@ -145,22 +164,47 @@ async def run_daily_rankings():
         raise
 
 
-async def run_initial_computation_if_needed():
-    """Run computation on startup if no data exists for today."""
+async def run_initial_computation_if_needed() -> int:
+    """Run computation on startup if no fresh data exists.
+
+    Returns:
+        Number of districts processed (0 if no computation needed)
+    """
     try:
         from app.services.db_manager import db_manager
 
         today_str = datetime.now().strftime("%Y-%m-%d")
         existing = db_manager.get_results_for_date(today_str)
 
+        # DEBUG: Print what we found
+        print(f"[DEBUG] existing data: {len(existing)} records", flush=True)
+
+        # Check if we have fresh data (computed in last 30 minutes)
+        has_fresh = db_manager.has_fresh_data(max_age_minutes=30)
+
+        # DEBUG: Print freshness check
+        print(f"[DEBUG] has_fresh_data: {has_fresh}", flush=True)
+
         if not existing:
+            print(f"[DEBUG] No existing data - computing now!", flush=True)
             logger.info("No data found for today. Running initial computation...")
-            await run_daily_rankings()
+            return await run_daily_rankings(force=True)
+        elif not has_fresh:
+            print(f"[DEBUG] Data exists but stale - recomputing!", flush=True)
+            logger.info(
+                f"Found {len(existing)} records but data is stale. Recomputing..."
+            )
+            return await run_daily_rankings(force=True)
         else:
-            logger.info(f"Found {len(existing)} existing records for today")
+            print(
+                f"[DEBUG] Data exists and is fresh - skipping computation", flush=True
+            )
+            logger.info(f"Found {len(existing)} fresh records for today")
+            return len(existing)
 
     except Exception as e:
         logger.error(f"Initial computation check failed: {e}")
+        return 0
 
 
 def setup_scheduler():
