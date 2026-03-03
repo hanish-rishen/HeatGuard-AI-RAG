@@ -24,7 +24,7 @@ import json
 import asyncio
 import io
 import time
-from typing import List, Optional
+from typing import List, Optional, Dict
 from fastapi.responses import StreamingResponse
 import hashlib
 import hmac
@@ -890,17 +890,163 @@ async def get_mortality_risk():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def fetch_historical_weather(
+    district_name: str, date_str: str
+) -> Optional[Dict[str, float]]:
+    """Fetch historical weather data from Open-Meteo for a specific date."""
+    try:
+        coords = _get_district_coords(district_name)
+        if not coords:
+            # Fallback to central India coordinates
+            coords = {"lat": 23.0, "lon": 78.0}
+
+        # Use Open-Meteo Historical API
+        url = "https://archive-api.open-meteo.com/v1/archive"
+
+        params = {
+            "latitude": coords["lat"],
+            "longitude": coords["lon"],
+            "start_date": date_str,
+            "end_date": date_str,
+            "daily": "temperature_2m_max,relative_humidity_2m_mean",
+            "timezone": "auto",
+        }
+
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+
+        daily = data.get("daily", {})
+        max_temp_list = daily.get("temperature_2m_max", [])
+        humidity_list = daily.get("relative_humidity_2m_mean", [])
+
+        if not max_temp_list or not humidity_list:
+            return None
+
+        max_temp = max_temp_list[0]
+        humidity = humidity_list[0]
+
+        # LST approximation: Max Temp + 2 degrees
+        lst = max_temp + 2.0 if max_temp else None
+
+        return {
+            "max_temp": max_temp,
+            "humidity": humidity,
+            "lst": lst,
+            "date": date_str,
+        }
+    except Exception as e:
+        logger.error(
+            f"Error fetching historical weather for {district_name} on {date_str}: {e}"
+        )
+        return None
+
+
 @router.get("/districts/{district_name}/history", response_model=list[dict])
 async def get_district_history(
-    district_name: str, limit: int = 30, _: dict = Depends(require_auth)
+    district_name: str, limit: int = 7, _: dict = Depends(require_auth)
 ):
     """
     Get historical trend data for a specific district.
-    Returns real data from database only - no synthetic data generation.
+    Fetches real historical weather from Open-Meteo if database data is insufficient.
     """
     try:
+        # Get existing data from database
         history = db_manager.get_district_history(district_name, days=limit)
-        return history or []
+
+        # If we have enough data, return it
+        if history and len(history) >= 7:
+            return history
+
+        # Need to fetch historical data from Open-Meteo
+        logger.info(f"Fetching historical weather for {district_name} from Open-Meteo")
+
+        # Get census data for the district
+        census_data = data_fetcher.get_district_census(district_name)
+        if not census_data:
+            logger.warning(f"No census data for {district_name}, using defaults")
+            census_data = {
+                "pct_children": 0.13,
+                "pct_outdoor_workers": 0.15,
+                "pct_vulnerable_social": 0.20,
+            }
+
+        # Determine which dates we need
+        existing_dates = set()
+        if history:
+            existing_dates = {h.get("date") for h in history if h.get("date")}
+
+        # Build 7-day history ending today
+        today = datetime.now()
+        target_dates = []
+        for i in range(6, -1, -1):
+            date_obj = today - timedelta(days=i)
+            date_str = date_obj.strftime("%Y-%m-%d")
+            if date_str not in existing_dates:
+                target_dates.append(date_str)
+
+        # Fetch historical weather for missing dates
+        new_entries = []
+        for date_str in target_dates:
+            weather = await fetch_historical_weather(district_name, date_str)
+            if weather:
+                # Compute risk using predictive engine
+                try:
+                    pred_load, heat_index = predictive_engine.predict(
+                        district_name=district_name,
+                        max_temp=weather["max_temp"],
+                        lst=weather["lst"],
+                        humidity=weather["humidity"],
+                        pct_children=census_data.get("pct_children", 0.13),
+                        pct_outdoor_workers=census_data.get(
+                            "pct_outdoor_workers", 0.15
+                        ),
+                        pct_vulnerable_social=census_data.get(
+                            "pct_vulnerable_social", 0.20
+                        ),
+                        date_str=date_str,
+                    )
+
+                    entry = {
+                        "district_name": district_name,
+                        "date": date_str,
+                        "max_temp": weather["max_temp"],
+                        "humidity": weather["humidity"],
+                        "lst": weather["lst"],
+                        "risk_score": float(pred_load),
+                        "heat_index": float(heat_index),
+                        "pct_children": census_data.get("pct_children", 0.13),
+                        "pct_outdoor_workers": census_data.get(
+                            "pct_outdoor_workers", 0.15
+                        ),
+                        "pct_vulnerable_social": census_data.get(
+                            "pct_vulnerable_social", 0.20
+                        ),
+                    }
+                    new_entries.append(entry)
+                except Exception as e:
+                    logger.error(
+                        f"Error computing risk for {district_name} on {date_str}: {e}"
+                    )
+
+        # Combine existing and new data
+        all_history = list(history or []) + new_entries
+
+        # Sort by date
+        all_history.sort(key=lambda x: x.get("date", ""))
+
+        # Save new entries to database for future use
+        if new_entries:
+            try:
+                db_manager.save_results_bulk(new_entries)
+                logger.info(
+                    f"Saved {len(new_entries)} historical entries for {district_name}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save historical entries: {e}")
+
+        return all_history
+
     except Exception as e:
         logger.error(f"Error fetching district history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
