@@ -988,14 +988,18 @@ async def get_district_history(
         even when some days are missing or a district wasn't processed every day.
     """
     try:
-        # Try cache first
+        # Try cache first (if available)
         cache_key = f"history:{district_name}:{limit}"
-        cached = cache_manager.get(cache_key)
-        if cached:
-            logger.info(f"Returning cached history for {district_name}")
-            return cached
+        if CACHE_ENABLED and cache_manager:
+            try:
+                cached = cache_manager.get(cache_key)
+                if cached:
+                    logger.info(f"Returning cached history for {district_name}")
+                    return cached
+            except Exception as cache_error:
+                logger.warning(f"Cache get failed: {cache_error}")
 
-        history = db_manager.get_district_history(district_name, limit=limit)
+        history = db_manager.get_district_history(district_name, days=limit)
 
         # Dev-friendly behavior: if we have < 7 days of history, generate a deterministic
         # synthetic 7-day series around the latest known datapoint so charts don't look broken.
@@ -1031,14 +1035,21 @@ async def get_district_history(
                         "lst": base_lst + wob,
                     }
                 )
-            # Cache the generated history
-            cache_manager.set(cache_key, out, ttl=3600)
+            # Cache the generated history (if available)
+            if CACHE_ENABLED and cache_manager:
+                try:
+                    cache_manager.set(cache_key, out, ttl=3600)
+                except Exception as cache_error:
+                    logger.warning(f"Cache set failed: {cache_error}")
             return out
 
         # If no history, return empty list (client handles it)
         result = history or []
-        if result:
-            cache_manager.set(cache_key, result, ttl=3600)
+        if result and CACHE_ENABLED and cache_manager:
+            try:
+                cache_manager.set(cache_key, result, ttl=3600)
+            except Exception as cache_error:
+                logger.warning(f"Cache set failed: {cache_error}")
         return result
     except Exception as e:
         logger.error(f"Error fetching district history: {e}")
