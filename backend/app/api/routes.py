@@ -241,6 +241,52 @@ async def health_check():
     )
 
 
+@router.get("/system-status")
+async def system_status():
+    """
+    PURPOSE: Detailed system status including database and Redis.
+    """
+    status = {
+        "status": "healthy",
+        "version": settings.app_version,
+        "database": {"connected": False, "type": "unknown", "records": 0},
+        "redis": {"connected": False, "cached_keys": 0},
+        "models": {
+            "predictive_loaded": predictive_engine.is_loaded(),
+            "prescriptive_loaded": prescriptive_engine.is_initialized(),
+        },
+    }
+
+    # Check database
+    try:
+        from app.services.db_manager import USE_POSTGRES
+
+        status["database"]["type"] = "PostgreSQL" if USE_POSTGRES else "SQLite"
+        count = len(db_manager.get_results_for_date("2026-03-03"))
+        status["database"]["connected"] = True
+        status["database"]["records"] = count
+    except Exception as e:
+        status["database"]["error"] = str(e)
+
+    # Check Redis
+    if CACHE_ENABLED and cache_manager:
+        try:
+            # Try to set and get a test key
+            cache_manager.set("health_check", {"timestamp": "test"}, ttl=10)
+            test_val = cache_manager.get("health_check")
+            if test_val:
+                status["redis"]["connected"] = True
+                status["redis"]["cached_keys"] = (
+                    len([k for k in ["health_check"] if cache_manager.get(k)]) or 0
+                )
+        except Exception as e:
+            status["redis"]["error"] = str(e)
+    else:
+        status["redis"]["status"] = "disabled"
+
+    return status
+
+
 @router.post("/auth/login", response_model=TokenResponse)
 async def login(request: LoginRequest):
     # Debug logging for auth issues

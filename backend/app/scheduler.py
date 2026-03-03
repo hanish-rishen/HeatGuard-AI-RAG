@@ -253,3 +253,103 @@ def get_scheduler_status():
             for job in scheduler.get_jobs()
         ],
     }
+
+
+async def generate_synthetic_history(days: int = 7):
+    """
+    PURPOSE: Generate synthetic historical data for testing 7-day trends.
+
+    This creates fake historical records for all districts to populate the
+    7-day trend chart. The synthetic data will naturally be replaced by
+    real data as the scheduler runs daily.
+
+    Args:
+        days: Number of days of history to generate (default: 7)
+    """
+    logger.info(f"Generating {days} days of synthetic historical data...")
+
+    try:
+        from app.services.data_fetcher import data_fetcher
+        from app.services.db_manager import db_manager
+        from app.api.routes import _get_district_coords
+        from datetime import datetime, timedelta
+        import random
+
+        all_districts = data_fetcher.get_all_districts()
+        today = datetime.now()
+        total_created = 0
+
+        # Generate data for past N days
+        for day_offset in range(days, 0, -1):
+            date_obj = today - timedelta(days=day_offset)
+            date_str = date_obj.strftime("%Y-%m-%d")
+
+            # Check if data already exists for this date
+            existing = db_manager.get_results_for_date(date_str)
+            if existing:
+                logger.info(f"Data already exists for {date_str}, skipping")
+                continue
+
+            synthetic_results = []
+
+            for district_name in all_districts:
+                # Get base census data for realistic values
+                census_data = data_fetcher.get_district_census(district_name)
+
+                # Generate realistic synthetic values with some randomness
+                base_temp = 30.0 + random.uniform(-5, 8)  # 25-38°C
+                base_humidity = 50.0 + random.uniform(-15, 20)  # 35-70%
+                base_lst = base_temp + random.uniform(0, 5)  # LST slightly higher
+
+                # Generate risk score with some randomness
+                base_risk = random.uniform(0.2, 0.8)
+                heat_index = base_temp + (base_humidity / 100) * 5
+
+                # Determine risk status
+                if base_risk > 0.7:
+                    risk_status = "Red"
+                elif base_risk > 0.4:
+                    risk_status = "Amber"
+                else:
+                    risk_status = "Green"
+
+                coords = _get_district_coords(district_name)
+
+                result_item = {
+                    "district_name": district_name,
+                    "lat": (coords or {}).get("lat"),
+                    "lon": (coords or {}).get("lon"),
+                    "risk_score": round(base_risk, 2),
+                    "risk_status": risk_status,
+                    "heat_index": round(heat_index, 2),
+                    "max_temp": round(base_temp, 2),
+                    "humidity": round(base_humidity, 2),
+                    "lst": round(base_lst, 2),
+                    "pct_children": census_data.get("pct_children", 0.3)
+                    if census_data
+                    else 0.3,
+                    "pct_outdoor_workers": census_data.get("pct_outdoor_workers", 0.4)
+                    if census_data
+                    else 0.4,
+                    "pct_vulnerable_social": census_data.get(
+                        "pct_vulnerable_social", 0.2
+                    )
+                    if census_data
+                    else 0.2,
+                }
+                synthetic_results.append(result_item)
+
+            # Save synthetic results
+            if synthetic_results:
+                inserted = db_manager.save_results_bulk(synthetic_results)
+                total_created += inserted
+                logger.info(f"Created {inserted} synthetic records for {date_str}")
+
+        logger.info(
+            f"Synthetic history generation complete! Total: {total_created} records"
+        )
+        return total_created
+
+    except Exception as e:
+        logger.error(f"Error generating synthetic history: {e}")
+        return 0
