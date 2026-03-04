@@ -9,7 +9,9 @@ using retrieved context and (optionally) an LLM.
 """
 
 import os
+import asyncio
 from typing import List, Dict, Any, Optional
+from functools import wraps
 
 from app.core.config import get_settings
 from app.schemas.models import SourceDocument
@@ -20,6 +22,47 @@ embedding_functions = None
 ChatMistralAI = None
 ChatPromptTemplate = None
 StrOutputParser = None
+
+
+def async_retry_with_backoff(max_retries=3, base_delay=2):
+    """
+    Decorator for async functions with exponential backoff retry logic.
+    Retries on failure with delays: 2s, 4s, 8s (for max_retries=3)
+    """
+
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    error_str = str(e).lower()
+                    # Check if it's a rate limit error
+                    is_rate_limit = any(
+                        x in error_str for x in ["rate limit", "too many", "429"]
+                    )
+
+                    if attempt < max_retries - 1:
+                        delay = base_delay * (2**attempt)  # 2s, 4s, 8s
+                        if is_rate_limit:
+                            print(
+                                f"[Retry] Rate limit hit, waiting {delay}s before retry {attempt + 1}/{max_retries}..."
+                            )
+                        else:
+                            print(
+                                f"[Retry] Attempt {attempt + 1} failed, retrying in {delay}s..."
+                            )
+                        await asyncio.sleep(delay)
+                    else:
+                        print(f"[Retry] All {max_retries} attempts failed.")
+            raise last_exception
+
+        return wrapper
+
+    return decorator
 
 
 class PrescriptiveEngine:
@@ -118,17 +161,22 @@ class PrescriptiveEngine:
             )
             print(f"[PrescriptiveEngine] Connected to ChromaDB at {persist_dir}")
 
-            # 4. Setup LLM (Mistral)
+            # 4. Setup LLM (Mistral/Codestral)
             if (
                 self.settings.mistral_api_key
                 and self.settings.mistral_api_key != "your_mistral_api_key_here"
             ):
-                self.llm = ChatMistralAI(
-                    mistral_api_key=self.settings.mistral_api_key,
-                    model=self.settings.mistral_model,
-                )
+                # Support custom endpoints (e.g., Codestral: https://codestral.mistral.ai/v1)
+                llm_kwargs = {
+                    "mistral_api_key": self.settings.mistral_api_key,
+                    "model": self.settings.mistral_model,
+                }
+                if self.settings.mistral_api_url:
+                    llm_kwargs["endpoint"] = self.settings.mistral_api_url
+
+                self.llm = ChatMistralAI(**llm_kwargs)
                 print(
-                    f"[PrescriptiveEngine] LLM initialized: Mistral AI ({self.settings.mistral_model})"
+                    f"[PrescriptiveEngine] LLM initialized: {self.settings.mistral_model} ({self.settings.mistral_api_url or 'default'})"
                 )
             else:
                 print(
@@ -164,6 +212,47 @@ class PrescriptiveEngine:
             print(f"[PrescriptiveEngine] Error deleting document {filename}: {e}")
             return False
 
+    def get_all_document_sources(self) -> List[Dict[str, Any]]:
+        """
+        PURPOSE: Get all unique document sources from ChromaDB.
+        This helps sync the UI with documents that exist in ChromaDB but not in the database.
+        """
+        self._ensure_initialized()
+        try:
+            # Get all documents from collection (limit 10000)
+            results = self.collection.get(limit=10000)
+
+            # Extract unique sources from metadata
+            sources = {}
+            if results["metadatas"]:
+                for meta in results["metadatas"]:
+                    source = meta.get("source", "Unknown")
+                    if source not in sources:
+                        sources[source] = {
+                            "filename": source,
+                            "chunk_count": 0,
+                            "pages": set(),
+                        }
+                    sources[source]["chunk_count"] += 1
+                    if meta.get("page"):
+                        sources[source]["pages"].add(meta["page"])
+
+            # Convert to list
+            result_list = []
+            for source, data in sources.items():
+                result_list.append(
+                    {
+                        "filename": data["filename"],
+                        "chunk_count": data["chunk_count"],
+                        "pages": sorted(list(data["pages"])) if data["pages"] else None,
+                    }
+                )
+
+            return result_list
+        except Exception as e:
+            print(f"[PrescriptiveEngine] Error getting document sources: {e}")
+            return []
+
     def query_protocols(
         self, query_text: str, n_results: int = 3
     ) -> List[SourceDocument]:
@@ -197,6 +286,13 @@ class PrescriptiveEngine:
         except Exception as e:
             print(f"[PrescriptiveEngine] Error querying protocols: {e}")
             return []
+
+    @async_retry_with_backoff(max_retries=3, base_delay=2)
+    async def _llm_invoke_with_retry(self, messages):
+        """Wrapper for LLM calls with exponential backoff retry logic."""
+        if not self.llm:
+            raise Exception("LLM not initialized")
+        return await self.llm.ainvoke(messages)
 
     async def chat_rag(
         self, user_query: str, district_context: Optional[str] = None
@@ -244,14 +340,12 @@ class PrescriptiveEngine:
                     ("user", user_query),
                 ]
 
-                response = await self.llm.ainvoke(messages)
+                response = await self._llm_invoke_with_retry(messages)
                 answer = response.content
                 used_llm = True
             except Exception as e:
-                print(f"Chat LLM failed: {e}")
-                answer = (
-                    "I encountered an error processing your request with the AI model."
-                )
+                print(f"Chat LLM failed after retries: {e}")
+                answer = "I encountered an error processing your request with the AI model (rate limit exceeded)."
 
         if not used_llm:
             # 3. Fallback without LLM
@@ -318,19 +412,24 @@ class PrescriptiveEngine:
                 prompt = ChatPromptTemplate.from_template(prompt_template)
                 chain = prompt | self.llm | StrOutputParser()
 
-                response = await chain.ainvoke(
-                    {
-                        "district": district_name,
-                        "heat_index": heat_index,
-                        "risk_level": risk_level,
-                        "context": context_str,
-                    }
-                )
+                # Wrap chain invocation with retry logic
+                @async_retry_with_backoff(max_retries=3, base_delay=2)
+                async def invoke_chain():
+                    return await chain.ainvoke(
+                        {
+                            "district": district_name,
+                            "heat_index": heat_index,
+                            "risk_level": risk_level,
+                            "context": context_str,
+                        }
+                    )
+
+                response = await invoke_chain()
                 return response
 
             except Exception as e:
                 print(
-                    f"[PrescriptiveEngine] LLM Generation failed: {e}. Falling back to rule-based."
+                    f"[PrescriptiveEngine] LLM Generation failed after retries: {e}. Falling back to rule-based."
                 )
 
         # --- FALLBACK PATH (Rule-based) ---

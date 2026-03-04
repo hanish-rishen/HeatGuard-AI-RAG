@@ -19,6 +19,29 @@ from app.api.routes import router as api_router
 
 settings = get_settings()
 
+# Log startup mode information
+print(f"[{settings.app_name}] {'=' * 50}", flush=True)
+print(f"[{settings.app_name}] STARTUP MODE INFORMATION", flush=True)
+print(f"[{settings.app_name}] {'=' * 50}", flush=True)
+print(
+    f"[{settings.app_name}] Local Mode: {'ENABLED' if settings.use_local_mode else 'DISABLED'}",
+    flush=True,
+)
+print(
+    f"[{settings.app_name}] Presentation Mode: {'ENABLED' if settings.presentation_mode else 'DISABLED'}",
+    flush=True,
+)
+print(
+    f"[{settings.app_name}] Database: {'SQLite (Local File)' if settings.use_local_mode or not settings.database_url else 'PostgreSQL (Remote)'}",
+    flush=True,
+)
+print(
+    f"[{settings.app_name}] Database URL: {'Not set (using SQLite)' if not settings.database_url else settings.database_url.split('@')[0] + '@...' if '@' in settings.database_url else 'Set'}",
+    flush=True,
+)
+print(f"[{settings.app_name}] Debug Mode: {settings.debug}", flush=True)
+print(f"[{settings.app_name}] {'=' * 50}", flush=True)
+
 # Global flag to track server readiness
 _server_ready = False
 
@@ -225,9 +248,8 @@ async def root():
 async def healthcheck():
     global _server_ready
 
-    # Check data availability and freshness
+    # Check data availability
     data_count = 0
-    is_fresh = False
     try:
         from datetime import datetime
         from app.services.db_manager import db_manager
@@ -235,15 +257,18 @@ async def healthcheck():
         today_str = datetime.now().strftime("%Y-%m-%d")
         existing = db_manager.get_results_for_date(today_str)
         data_count = len(existing) if existing else 0
-        is_fresh = db_manager.has_fresh_data(max_age_minutes=30)
     except Exception:
         pass
 
+    # Consider ready if we have data for today (regardless of freshness)
+    # The scheduler will refresh stale data in the background
+    has_data = data_count > 0
+
     return {
         "status": "ok",
-        "ready": _server_ready,
-        "data_available": data_count > 0 and is_fresh,
-        "data_fresh": is_fresh,
+        "ready": _server_ready or has_data,  # Ready if marked ready OR has data
+        "data_available": has_data,
+        "data_fresh": _server_ready,  # Fresh only if computed recently
         "districts_loaded": data_count,
     }
 

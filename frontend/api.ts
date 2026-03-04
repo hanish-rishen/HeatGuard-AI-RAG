@@ -1,5 +1,30 @@
 import axios from 'axios';
 
+// --- CHANGED: Added fetchWithRetry helper for resilient API calls ---
+const fetchWithRetry = async <T>(
+    fn: () => Promise<T>,
+    retries = 3,
+    delay = 1000
+): Promise<T> => {
+    let lastError;
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await fn();
+        } catch (error: any) {
+            lastError = error;
+            // Don't retry on 401 (auth failure) or 400 (bad request)
+            if (error.response?.status === 401 || error.response?.status === 400) {
+                throw error;
+            }
+            // Wait before retrying
+            if (i < retries - 1) {
+                await new Promise(r => setTimeout(r, delay * (i + 1)));
+            }
+        }
+    }
+    throw lastError;
+};
+
 // --- Types matching Backend Schemas ---
 
 export interface DistrictData {
@@ -183,16 +208,31 @@ export const HeatGuardAPI = {
         }
         return response.data;
     },
+    // --- CHANGED: Wrapped with retry logic and improved error handling ---
     verifyAuth: async (): Promise<boolean> => {
         try {
-            await api.get('/auth/verify', { timeout: 4000 });
+            await fetchWithRetry(() =>
+                api.get('/auth/verify', { timeout: 15000 })  // --- CHANGED: Increased timeout from 4000ms to 15000ms ---
+            );
             return true;
         } catch (error: any) {
-            console.error('Auth verification failed:', error.message);
-            if (error.response) {
-                console.error('Response status:', error.response.status);
-                console.error('Response data:', error.response.data);
+            // Network error (no response) - backend likely asleep, DON'T clear token
+            if (!error.response) {
+                console.warn('Auth verification: Network error (backend may be asleep), preserving token');
+                return false;
             }
+
+            // Actual auth failure (401) - clear token
+            if (error.response.status === 401) {
+                console.error('Auth verification failed: Invalid token (401)');
+                HeatGuardAPI.logout();  // Clear invalid token
+                return false;
+            }
+
+            // Other errors (400, 500, etc.) - log but don't clear token
+            console.error('Auth verification failed:', error.message);
+            console.error('Response status:', error.response.status);
+            console.error('Response data:', error.response.data);
             return false;
         }
     },
@@ -269,6 +309,36 @@ export const HeatGuardAPI = {
 
     deleteFile: async (filename: string): Promise<void> => {
         await api.delete(`/files/${encodeURIComponent(filename)}`);
+    },
+
+    syncFiles: async (): Promise<{
+        status: string;
+        database_count: number;
+        chromadb_count: number;
+        orphaned_count: number;
+        orphaned_files: Array<{
+            filename: string;
+            chunk_count: number;
+            pages: number[] | null;
+        }>;
+        message: string;
+    }> => {
+        const response = await api.get('/files/sync');
+        return response.data;
+    },
+
+    getOrphanedFiles: async (): Promise<{
+        orphaned_count: number;
+        database_count: number;
+        chromadb_count: number;
+        orphaned_files: Array<{
+            filename: string;
+            chunk_count: number;
+            pages: number[] | null;
+        }>;
+    }> => {
+        const response = await api.get('/files/orphans');
+        return response.data;
     },
 };
 

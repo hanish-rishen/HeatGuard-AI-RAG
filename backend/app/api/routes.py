@@ -24,11 +24,12 @@ import json
 import asyncio
 import io
 import time
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from fastapi.responses import StreamingResponse
 import hashlib
 import hmac
 import base64
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +250,13 @@ async def system_status():
     status = {
         "status": "healthy",
         "version": settings.app_version,
+        "mode": {
+            "local_mode": settings.use_local_mode,
+            "presentation_mode": settings.presentation_mode,
+            "deployment_type": "local"
+            if settings.use_local_mode
+            else ("deployed" if settings.database_url else "unknown"),
+        },
         "database": {"connected": False, "type": "unknown", "records": 0},
         "redis": {"connected": False, "cached_keys": 0},
         "models": {
@@ -386,6 +394,97 @@ async def delete_file(filename: str, _: dict = Depends(require_auth)):
 
     except Exception as e:
         logger.error(f"Delete failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/files/sync", response_model=Dict[str, Any])
+async def sync_files(_: dict = Depends(require_auth)):
+    """
+    PURPOSE: Sync file metadata between ChromaDB and SQLite database.
+    Identifies orphaned documents in ChromaDB and recreates metadata entries.
+    """
+    try:
+        # 1. Get all files from database
+        db_files = {f["filename"]: f for f in db_manager.get_all_files()}
+        logger.info(f"Found {len(db_files)} files in database")
+
+        # 2. Get all documents from ChromaDB
+        chroma_docs = prescriptive_engine.get_all_document_sources()
+        logger.info(f"Found {len(chroma_docs)} unique sources in ChromaDB")
+
+        # 3. Find orphaned documents (in ChromaDB but not in DB)
+        orphaned = []
+        synced = []
+
+        for doc in chroma_docs:
+            filename = doc["filename"]
+            if filename not in db_files:
+                # This is an orphaned document - recreate metadata
+                orphaned.append(
+                    {
+                        "filename": filename,
+                        "chunk_count": doc["chunk_count"],
+                        "pages": doc["pages"],
+                    }
+                )
+
+                # Recreate metadata entry
+                db_manager.save_file_metadata(
+                    {
+                        "filename": filename,
+                        "size_bytes": 0,  # Unknown for orphaned docs
+                        "content_type": "application/pdf",  # Assume PDF
+                        "description": f"Recovered from ChromaDB ({doc['chunk_count']} chunks)",
+                        "status": "Indexed",
+                    }
+                )
+                logger.info(f"Recreated metadata for orphaned file: {filename}")
+            else:
+                synced.append(filename)
+
+        return {
+            "status": "sync_complete",
+            "database_count": len(db_files),
+            "chromadb_count": len(chroma_docs),
+            "orphaned_count": len(orphaned),
+            "orphaned_files": orphaned,
+            "synced_files": synced,
+            "message": f"Found {len(orphaned)} orphaned documents and restored their metadata",
+        }
+
+    except Exception as e:
+        logger.error(f"Sync failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/files/orphans", response_model=Dict[str, Any])
+async def list_orphaned_files(_: dict = Depends(require_auth)):
+    """
+    PURPOSE: List documents that exist in ChromaDB but not in the database metadata.
+    These are 'orphaned' documents that will be cited by RAG but not shown in the UI.
+    """
+    try:
+        # 1. Get all files from database
+        db_files = {f["filename"]: f for f in db_manager.get_all_files()}
+
+        # 2. Get all documents from ChromaDB
+        chroma_docs = prescriptive_engine.get_all_document_sources()
+
+        # 3. Find orphaned documents
+        orphaned = []
+        for doc in chroma_docs:
+            if doc["filename"] not in db_files:
+                orphaned.append(doc)
+
+        return {
+            "orphaned_count": len(orphaned),
+            "database_count": len(db_files),
+            "chromadb_count": len(chroma_docs),
+            "orphaned_files": orphaned,
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to list orphans: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

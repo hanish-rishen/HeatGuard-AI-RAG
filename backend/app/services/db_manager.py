@@ -5,26 +5,89 @@ Database Manager - Supports SQLite (local dev) and PostgreSQL (Leapcell producti
 import os
 import json
 import logging
+import time  # MODIFIED: Added for connection retry delay
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 from contextlib import contextmanager
+from pathlib import Path
+
+# MODIFIED: Import get_settings at the top
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Database type detection
-USE_POSTGRES = os.getenv("DATABASE_URL", "").startswith("postgresql")
+# Load .env file explicitly before checking DATABASE_URL
+# This ensures local development can use PostgreSQL via .env
+env_path = Path(__file__).parent.parent.parent / ".env"
+if env_path.exists():
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=True)
+        logger.info(f"Loaded environment from {env_path}")
+    except ImportError:
+        pass  # python-dotenv not installed
+
+
+# MODIFIED: Changed USE_POSTGRES detection logic to check use_local_mode first
+def _detect_database_type():
+    """Detect which database to use based on settings and environment."""
+    try:
+        settings = get_settings()
+        # MODIFIED: First check if use_local_mode is True in settings
+        if settings.use_local_mode:
+            logger.info(
+                "[MODE DETECTION] use_local_mode=True → Using SQLITE (Local Mode)"
+            )
+            return False  # Force SQLite
+        else:
+            logger.info(
+                "[MODE DETECTION] use_local_mode=False → Will check DATABASE_URL"
+            )
+    except Exception as e:
+        logger.warning(
+            f"[MODE DETECTION] Could not load settings, falling back to env check: {e}"
+        )
+
+    # MODIFIED: Otherwise use existing DATABASE_URL logic
+    database_url = os.getenv("DATABASE_URL", "")
+    has_postgres_url = database_url.startswith("postgresql")
+
+    if has_postgres_url:
+        logger.info(
+            f"[MODE DETECTION] DATABASE_URL starts with 'postgresql' → Using POSTGRESQL (Deployed Mode)"
+        )
+        logger.info(
+            f"[MODE DETECTION] Database host: {database_url.split('@')[1].split('/')[0] if '@' in database_url else 'unknown'}"
+        )
+    else:
+        logger.info(
+            f"[MODE DETECTION] DATABASE_URL not set or not PostgreSQL → Using SQLITE (Fallback)"
+        )
+
+    return has_postgres_url
+
+
+USE_POSTGRES = _detect_database_type()
+
+# Log database mode clearly
+logger.info("=" * 60)
+logger.info(
+    "DATABASE MODE: %s",
+    "POSTGRESQL (Remote/Deployed)" if USE_POSTGRES else "SQLITE (Local File)",
+)
+logger.info("=" * 60)
 
 if USE_POSTGRES:
     import psycopg2
     from psycopg2.extras import RealDictCursor, execute_values
 
-    logger.info("Using PostgreSQL database")
+    logger.info("PostgreSQL mode enabled - will connect to remote database")
 else:
     import sqlite3
-    from pathlib import Path
     from app.core.config import get_backend_dir
 
-    logger.info("Using SQLite database")
+    logger.info("SQLite mode enabled - using local file database")
 
 
 class DBManager:
@@ -43,29 +106,52 @@ class DBManager:
             self._initialized = True
 
     def _get_connection(self):
-        """Get database connection based on configuration."""
-        if USE_POSTGRES:
-            database_url = os.getenv("DATABASE_URL")
-            return psycopg2.connect(database_url)
-        else:
-            # SQLite fallback for local development
-            import tempfile
-            import os as os_module
+        """Get database connection based on configuration with retry logic."""
+        # MODIFIED: Added connection retry logic with up to 3 attempts
+        max_retries = 3
+        retry_delay = 1  # seconds
+        last_error = None
 
-            if os_module.name == "nt":  # Windows
-                db_path = Path(get_backend_dir()) / "district_analytics.db"
-            else:
-                tmp_path = Path("/tmp") / "district_analytics.db"
-                try:
-                    tmp_path.parent.mkdir(parents=True, exist_ok=True)
-                    test_file = tmp_path.parent / ".write_test"
-                    test_file.touch()
-                    test_file.unlink()
-                    db_path = tmp_path
-                except (OSError, PermissionError):
-                    db_path = Path(get_backend_dir()) / "district_analytics.db"
+        for attempt in range(1, max_retries + 1):
+            try:
+                if USE_POSTGRES:
+                    database_url = os.getenv("DATABASE_URL")
+                    return psycopg2.connect(database_url)
+                else:
+                    # SQLite fallback for local development
+                    import tempfile
+                    import os as os_module
 
-            return sqlite3.connect(db_path)
+                    if os_module.name == "nt":  # Windows
+                        db_path = Path(get_backend_dir()) / "district_analytics.db"
+                    else:
+                        tmp_path = Path("/tmp") / "district_analytics.db"
+                        try:
+                            tmp_path.parent.mkdir(parents=True, exist_ok=True)
+                            test_file = tmp_path.parent / ".write_test"
+                            test_file.touch()
+                            test_file.unlink()
+                            db_path = tmp_path
+                        except (OSError, PermissionError):
+                            db_path = Path(get_backend_dir()) / "district_analytics.db"
+
+                    return sqlite3.connect(db_path)
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    # MODIFIED: Log each retry attempt
+                    logger.warning(
+                        f"Database connection attempt {attempt}/{max_retries} failed: {e}. Retrying in {retry_delay}s..."
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    # MODIFIED: All retries exhausted, log final failure
+                    logger.error(
+                        f"Database connection failed after {max_retries} attempts"
+                    )
+
+        # MODIFIED: Only throw error after all retries exhausted
+        raise last_error
 
     def init_db(self):
         """Initialize database schema."""
@@ -105,6 +191,19 @@ class DBManager:
                     CREATE INDEX IF NOT EXISTS idx_daily_analysis_computed 
                     ON daily_analysis(computed_at)
                 """)
+
+                # Create files table for RAG document management
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS files (
+                        id SERIAL PRIMARY KEY,
+                        filename VARCHAR(500) NOT NULL UNIQUE,
+                        size_bytes INTEGER,
+                        content_type VARCHAR(100),
+                        description TEXT,
+                        status VARCHAR(50) DEFAULT 'Processing',
+                        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
             else:
                 # SQLite schema
                 cursor.execute("""
@@ -125,6 +224,19 @@ class DBManager:
                         pct_outdoor_workers REAL,
                         pct_vulnerable_social REAL,
                         UNIQUE(date, district_name)
+                    )
+                """)
+
+                # Create files table for RAG document management (SQLite)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS files (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        filename TEXT NOT NULL UNIQUE,
+                        size_bytes INTEGER,
+                        content_type TEXT,
+                        description TEXT,
+                        status TEXT DEFAULT 'Processing',
+                        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
 
@@ -446,6 +558,182 @@ class DBManager:
 
         except Exception as e:
             logger.error(f"Error checking fresh data: {e}")
+            return False
+
+    # ----------------------------
+    # File Management Methods (for RAG)
+    # ----------------------------
+
+    def save_file_metadata(self, file_data: Dict) -> bool:
+        """Save metadata for an uploaded file."""
+        self._ensure_initialized()
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            if USE_POSTGRES:
+                cursor.execute(
+                    """
+                    INSERT INTO files (filename, size_bytes, content_type, description, status)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (filename) DO UPDATE SET
+                        size_bytes = EXCLUDED.size_bytes,
+                        content_type = EXCLUDED.content_type,
+                        description = EXCLUDED.description,
+                        status = EXCLUDED.status,
+                        uploaded_at = CURRENT_TIMESTAMP
+                """,
+                    (
+                        file_data.get("filename"),
+                        file_data.get("size_bytes"),
+                        file_data.get("content_type"),
+                        file_data.get("description"),
+                        file_data.get("status", "Processing"),
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO files (filename, size_bytes, content_type, description, status)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(filename) DO UPDATE SET
+                        size_bytes = excluded.size_bytes,
+                        content_type = excluded.content_type,
+                        description = excluded.description,
+                        status = excluded.status,
+                        uploaded_at = CURRENT_TIMESTAMP
+                """,
+                    (
+                        file_data.get("filename"),
+                        file_data.get("size_bytes"),
+                        file_data.get("content_type"),
+                        file_data.get("description"),
+                        file_data.get("status", "Processing"),
+                    ),
+                )
+
+            conn.commit()
+            conn.close()
+            logger.info(f"Saved file metadata: {file_data.get('filename')}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error saving file metadata: {e}")
+            return False
+
+    def get_all_files(self) -> List[Dict]:
+        """Get all uploaded files with their metadata."""
+        self._ensure_initialized()
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT filename, size_bytes, content_type, description, status, uploaded_at
+                    FROM files
+                    ORDER BY uploaded_at DESC
+                """)
+            else:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT filename, size_bytes, content_type, description, status, uploaded_at
+                    FROM files
+                    ORDER BY uploaded_at DESC
+                """)
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            files = []
+            for row in rows:
+                if USE_POSTGRES:
+                    files.append(
+                        {
+                            "filename": row[0],
+                            "size_bytes": row[1],
+                            "content_type": row[2],
+                            "description": row[3],
+                            "status": row[4],
+                            "uploaded_at": row[5].isoformat()
+                            if hasattr(row[5], "isoformat")
+                            else row[5],
+                        }
+                    )
+                else:
+                    files.append(
+                        {
+                            "filename": row["filename"],
+                            "size_bytes": row["size_bytes"],
+                            "content_type": row["content_type"],
+                            "description": row["description"],
+                            "status": row["status"],
+                            "uploaded_at": row["uploaded_at"],
+                        }
+                    )
+
+            return files
+
+        except Exception as e:
+            logger.error(f"Error fetching files: {e}")
+            return []
+
+    def delete_file_metadata(self, filename: str) -> bool:
+        """Delete file metadata from the database."""
+        self._ensure_initialized()
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            if USE_POSTGRES:
+                cursor.execute("DELETE FROM files WHERE filename = %s", (filename,))
+            else:
+                cursor.execute("DELETE FROM files WHERE filename = ?", (filename,))
+
+            deleted = cursor.rowcount > 0
+            conn.commit()
+            conn.close()
+
+            if deleted:
+                logger.info(f"Deleted file metadata: {filename}")
+            else:
+                logger.warning(f"File not found for deletion: {filename}")
+
+            return deleted
+
+        except Exception as e:
+            logger.error(f"Error deleting file metadata: {e}")
+            return False
+
+    def update_file_status(self, filename: str, status: str) -> bool:
+        """Update the processing status of a file."""
+        self._ensure_initialized()
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            if USE_POSTGRES:
+                cursor.execute(
+                    "UPDATE files SET status = %s WHERE filename = %s",
+                    (status, filename),
+                )
+            else:
+                cursor.execute(
+                    "UPDATE files SET status = ? WHERE filename = ?", (status, filename)
+                )
+
+            updated = cursor.rowcount > 0
+            conn.commit()
+            conn.close()
+
+            if updated:
+                logger.info(f"Updated file status: {filename} -> {status}")
+
+            return updated
+
+        except Exception as e:
+            logger.error(f"Error updating file status: {e}")
             return False
 
 

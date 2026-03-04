@@ -34,7 +34,7 @@ export const ServerWakeUp: React.FC<ServerWakeUpProps> = ({
   const [districtsLoaded, setDistrictsLoaded] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
 
-  const MAX_TIME = 60; // 1 minute max for progress bar
+  const MAX_TIME = 120; // 2 minutes max for progress bar (matches backend timeout)
 
   // Main polling effect
   useEffect(() => {
@@ -196,7 +196,7 @@ export const ServerWakeUp: React.FC<ServerWakeUpProps> = ({
           <div className="flex justify-between text-xs text-gray-400 mb-2">
             <span className="flex items-center gap-1">
               <Clock className="w-3 h-3" />
-              {formatTime(elapsedTime)} / 1 min
+              {formatTime(elapsedTime)} / 2 min
             </span>
             <span>{Math.round(progress)}%</span>
           </div>

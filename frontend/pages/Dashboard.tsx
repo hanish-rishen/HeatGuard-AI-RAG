@@ -39,7 +39,10 @@ import {
   Thermometer,
   Droplet,
   ScrollText,
-  LogOut
+  LogOut,
+  Loader2,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import {
   AreaChart,
@@ -415,6 +418,37 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
   const [aiAdviceLoading, setAiAdviceLoading] = useState<boolean>(false);
   const [aiAdviceError, setAiAdviceError] = useState<string | null>(null);
   const [aiAdviceModalOpen, setAiAdviceModalOpen] = useState<boolean>(false);
+  const [shouldGenerateAdvice, setShouldGenerateAdvice] = useState<boolean>(false);
+
+  // Cache helper functions for AI recommendations
+  const getCachedAdvice = (districtName: string, date: string): string | null => {
+    try {
+      const key = `heatguard_ai_advice_${districtName}_${date}`;
+      const cached = localStorage.getItem(key);
+      if (cached) {
+        const data = JSON.parse(cached);
+        // Validate cache is for today
+        if (data.date === date && data.advice) {
+          console.log(`[Cache Hit] AI advice for ${districtName} on ${date}`);
+          return data.advice;
+        }
+      }
+    } catch (e) {
+      console.warn('[Cache] Error reading cache:', e);
+    }
+    return null;
+  };
+
+  const setCachedAdvice = (districtName: string, date: string, advice: string) => {
+    try {
+      const key = `heatguard_ai_advice_${districtName}_${date}`;
+      const data = { date, advice, timestamp: Date.now() };
+      localStorage.setItem(key, JSON.stringify(data));
+      console.log(`[Cache Set] AI advice for ${districtName} on ${date}`);
+    } catch (e) {
+      console.warn('[Cache] Error writing cache:', e);
+    }
+  };
 
   // Search State
   const [searchTerm, setSearchTerm] = useState('');
@@ -422,9 +456,29 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedDistrict, setSelectedDistrict] = useState<DistrictRanking | null>(null);
 
+  // Reset advice when district changes
+  useEffect(() => {
+    setAiAdvice('');
+    setAiAdviceError(null);
+    setShouldGenerateAdvice(false);
+  }, [selectedDistrict?.district_name]);
+
+  // Generate AI recommendation when requested
   useEffect(() => {
     const run = async () => {
-      if (!selectedDistrict || simplified) return;
+      if (!selectedDistrict || simplified || !shouldGenerateAdvice) return;
+
+      const today = new Date().toISOString().slice(0, 10);
+
+      // Check cache first
+      const cachedAdvice = getCachedAdvice(selectedDistrict.district_name, today);
+      if (cachedAdvice) {
+        setAiAdvice(cachedAdvice);
+        setAiAdviceError(null);
+        setAiAdviceLoading(false);
+        setShouldGenerateAdvice(false);
+        return;
+      }
 
       setAiAdviceLoading(true);
       setAiAdviceError(null);
@@ -438,7 +492,7 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
           pct_children: selectedDistrict.pct_children,
           pct_outdoor_workers: selectedDistrict.pct_outdoor_workers,
           pct_vulnerable_social: selectedDistrict.pct_vulnerable_social,
-          date: new Date().toISOString().slice(0, 10)
+          date: today
         });
         const raw = String(res?.prescriptive_advice || '').trim();
 
@@ -470,16 +524,19 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
         })();
 
         setAiAdvice(formatted);
+        // Cache the formatted advice
+        setCachedAdvice(selectedDistrict.district_name, today, formatted);
       } catch (e: any) {
         setAiAdvice('');
         setAiAdviceError(e?.message || 'Failed to generate AI recommendation');
       } finally {
         setAiAdviceLoading(false);
+        setShouldGenerateAdvice(false);
       }
     };
 
     run();
-  }, [selectedDistrict, simplified]);
+  }, [selectedDistrict, simplified, shouldGenerateAdvice]);
 
   // Close modal when switching districts.
   useEffect(() => {
@@ -1038,45 +1095,56 @@ const IndiaMapUI: React.FC<{ rankings: DistrictRanking[]; simplified?: boolean }
                        </div>
                    </div>
 
-                   <div className="pt-2 border-t border-slate-600">
-                       <div className="text-[10px] font-bold text-slate-400 uppercase mb-2 flex items-center justify-between">
-                         <span>AI Recommendation</span>
-                         <div className="flex items-center gap-2">
-                           {aiAdviceLoading && (
-                             <span className="inline-flex items-center" aria-label="Generating recommendation">
-                               <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                             </span>
-                           )}
-                           <button
-                             type="button"
-                             className="pointer-events-auto text-slate-300 hover:text-white transition-colors"
-                             onClick={() => setAiAdviceModalOpen(true)}
-                             title="Expand"
-                             aria-label="Open AI recommendation in large view"
-                           >
-                             <ArrowUpRight size={14} />
-                           </button>
-                         </div>
-                       </div>
-
-                       {aiAdviceError ? (
-                         <div className="text-xs text-red-300 leading-relaxed">
-                           Unable to generate recommendation ({aiAdviceError}).
-                         </div>
-                       ) : aiAdviceLoading ? (
-                         <div className="text-xs text-slate-300 leading-relaxed">
-                           Generating recommendation…
-                         </div>
-                      ) : (
-                        <div className="max-h-40 overflow-y-auto pr-1">
-                          <div className="prose prose-invert prose-xs max-w-none text-slate-200 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5">
-                            <ReactMarkdown>
-                              {aiAdvice || '—'}
-                            </ReactMarkdown>
+                    <div className="pt-2 border-t border-slate-600">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase mb-2 flex items-center justify-between">
+                          <span>AI Recommendation</span>
+                          <div className="flex items-center gap-2">
+                            {aiAdviceLoading && (
+                              <span className="inline-flex items-center" aria-label="Generating recommendation">
+                                <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                              </span>
+                            )}
+                            {aiAdvice && (
+                              <button
+                                type="button"
+                                className="pointer-events-auto text-slate-300 hover:text-white transition-colors"
+                                onClick={() => setAiAdviceModalOpen(true)}
+                                title="Expand"
+                                aria-label="Open AI recommendation in large view"
+                              >
+                                <ArrowUpRight size={14} />
+                              </button>
+                            )}
                           </div>
                         </div>
-                      )}
-                   </div>
+
+                        {aiAdviceError ? (
+                          <div className="text-xs text-red-300 leading-relaxed">
+                            Unable to generate recommendation ({aiAdviceError}).
+                          </div>
+                        ) : aiAdviceLoading ? (
+                          <div className="text-xs text-slate-300 leading-relaxed">
+                            Generating recommendation…
+                          </div>
+                        ) : aiAdvice ? (
+                          <div className="max-h-40 overflow-y-auto pr-1">
+                            <div className="prose prose-invert prose-xs max-w-none text-slate-200 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5">
+                              <ReactMarkdown>
+                                {aiAdvice}
+                              </ReactMarkdown>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setShouldGenerateAdvice(true)}
+                            disabled={aiAdviceLoading}
+                            className="w-full py-2 px-3 bg-primary/10 hover:bg-primary/20 border border-primary/30 rounded-lg text-xs text-primary font-medium transition-colors flex items-center justify-center gap-2"
+                          >
+                            <Sparkles size={14} />
+                            Generate AI Recommendation
+                          </button>
+                        )}
+                    </div>
 
                     {/* AI recommendation modal (portal into map container only) */}
                     {aiAdviceModalOpen && containerRef.current && createPortal(
@@ -1200,9 +1268,11 @@ const RagEngineView = () => {
 
     try {
       await new Promise<void>((resolve) => {
-        const url = force
-          ? `${API_BASE_URL}/districts/rankings?force=1&_ts=${Date.now()}`
-          : `${API_BASE_URL}/districts/rankings`;
+        const token = HeatGuardAPI.getStoredToken();
+        let url = HeatGuardAPI.getRankingsStreamUrl(token);
+        if (force) {
+          url += (url.includes('?') ? '&' : '?') + `force=1&_ts=${Date.now()}`;
+        }
         const eventSource = new EventSource(url);
 
         const kill = window.setTimeout(() => {
@@ -1351,13 +1421,25 @@ const RagEngineView = () => {
           // ignore
         }
 
+        // Get auth token for the request
+        const token = localStorage.getItem('heatguard_auth_token_v1');
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
         const response = await fetch(`${API_BASE_URL}/chat`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({ query: userText, district_context: districtContext })
         });
 
-        if (!response.ok) throw new Error("Backend connection failed");
+        if (!response.ok) {
+            if (response.status === 401) {
+                throw new Error("AUTH_ERROR: Please log in again.");
+            }
+            throw new Error("Backend connection failed");
+        }
 
         const data = await response.json();
 
@@ -1371,11 +1453,14 @@ const RagEngineView = () => {
         if (data.reasoning) setReasoning(data.reasoning);
         if (data.context) setContext(data.context);
 
-    } catch (e) {
+    } catch (e: any) {
+         const errorMessage = e?.message?.includes("AUTH_ERROR")
+            ? "System: Authentication failed. Please log out and log in again."
+            : "System: Error connecting to RAG backend. Please ensure the server is running.";
          setMessages(prev => [...prev, {
             id: Date.now() + 1,
             role: 'ai',
-            content: 'System: Error connecting to RAG backend. Please ensure the server is running.'
+            content: errorMessage
           }]);
   } finally {
     setIsChatLoading(false);
@@ -1604,19 +1689,128 @@ const DataSourcesView = () => {
 
   const [isDragging, setIsDragging] = useState(false);
 
+  // NEW: State for error handling and loading indicator
+  const [filesError, setFilesError] = useState<string | null>(null);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+
+  // NEW: State for orphaned files and sync functionality
+  const [orphanedFiles, setOrphanedFiles] = useState<Array<{
+    filename: string;
+    chunk_count: number;
+    pages: number[] | null;
+  }>>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
+  // NEW: Cache key for localStorage
+  const FILES_CACHE_KEY = 'heatguard_files_cache';
+
   // Load files on mount
   useEffect(() => {
+    // NEW: Load cached files first for instant display
+    const loadCachedFiles = () => {
+      try {
+        const cached = localStorage.getItem(FILES_CACHE_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached) as UploadedFile[];
+          setFiles(parsed);
+        }
+      } catch (e) {
+        console.error("Failed to load cached files", e);
+      }
+    };
+
+    loadCachedFiles();
+    // Fetch fresh data in background
     fetchFiles();
   }, []);
 
+  // NEW: Helper function for delay between retries
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
   const fetchFiles = async () => {
+    setIsLoadingFiles(true);
+    setFilesError(null);
+
     try {
-        const fetched = await HeatGuardAPI.getFiles();
-        setFiles(fetched);
-    } catch (e) {
-        console.error("Failed to fetch files", e);
+      const maxRetries = 3;
+      let lastError: Error | null = null;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const fetched = await HeatGuardAPI.getFiles();
+          setFiles(fetched);
+          // NEW: Cache successful response to localStorage
+          try {
+            localStorage.setItem(FILES_CACHE_KEY, JSON.stringify(fetched));
+          } catch (e) {
+            console.error("Failed to cache files", e);
+          }
+          return; // Success - exit function
+        } catch (e) {
+          lastError = e as Error;
+          console.error(`Failed to fetch files (attempt ${attempt}/${maxRetries})`, e);
+
+          // If not the last attempt, wait before retrying (exponential backoff)
+          if (attempt < maxRetries) {
+            const backoffDelay = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Max 5s delay
+            await delay(backoffDelay);
+          }
+        }
+      }
+
+      // All retries exhausted - set error state
+      setFilesError(
+        lastError?.message ||
+        'Unable to load your files. Please check your connection and try again.'
+      );
+    } finally {
+      // NEW: Always set loading to false when done (success or error)
+      setIsLoadingFiles(false);
     }
   };
+
+  // NEW: Handler for manual retry
+  const handleRetryFetch = () => {
+    fetchFiles();
+  };
+
+  // NEW: Check for orphaned files (in ChromaDB but not in database)
+  const checkOrphanedFiles = async () => {
+    try {
+      const result = await HeatGuardAPI.getOrphanedFiles();
+      setOrphanedFiles(result.orphaned_files);
+      if (result.orphaned_count > 0) {
+        setSyncMessage(`Found ${result.orphaned_count} orphaned document(s) in RAG storage that aren't shown in the UI.`);
+      }
+    } catch (e) {
+      console.error("Failed to check orphaned files", e);
+    }
+  };
+
+  // NEW: Sync files between ChromaDB and database
+  const handleSyncFiles = async () => {
+    setIsSyncing(true);
+    setSyncMessage(null);
+    try {
+      const result = await HeatGuardAPI.syncFiles();
+      setSyncMessage(result.message);
+      // Refresh file list after sync
+      await fetchFiles();
+      // Clear orphaned files list
+      setOrphanedFiles([]);
+    } catch (e) {
+      console.error("Failed to sync files", e);
+      setSyncMessage("Failed to sync files. Please try again.");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Check for orphaned files on mount
+  useEffect(() => {
+    checkOrphanedFiles();
+  }, []);
 
   const handleDragOver = (e: React.DragEvent) => {
       e.preventDefault();
@@ -1711,17 +1905,96 @@ const DataSourcesView = () => {
     <div className="bg-card rounded-2xl border-2 border-border shadow-3d flex-1 overflow-hidden flex flex-col min-h-[400px]">
       <div className="p-4 border-b border-border flex justify-between items-center bg-muted/10">
         <h3 className="font-bold">Indexed Documents</h3>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {/* NEW: Loading spinner shown when fetching files */}
+          {isLoadingFiles && (
+            <div className="flex items-center gap-2 text-muted-foreground text-xs">
+              <Loader2 size={16} className="animate-spin" />
+              <span>Loading...</span>
+            </div>
+          )}
           <button className="p-2 hover:bg-muted/20 rounded-lg"><Filter size={18} /></button>
         </div>
       </div>
+
+      {/* NEW: Error state UI - red alert box with retry button */}
+      {filesError && (
+        <div className="m-4 p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center justify-between">
+          <div className="flex items-center gap-3 text-red-500">
+            <AlertCircle size={20} />
+            <span className="text-sm font-medium">{filesError}</span>
+          </div>
+          <button
+            onClick={handleRetryFetch}
+            disabled={isLoadingFiles}
+            className="flex items-center gap-2 px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-red-500/50 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            {isLoadingFiles ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Retrying...
+              </>
+            ) : (
+              <>
+                <RefreshCw size={16} />
+                Retry
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* NEW: Orphaned files sync UI */}
+      {(orphanedFiles.length > 0 || syncMessage) && (
+        <div className="m-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 text-yellow-600">
+              <AlertCircle size={20} />
+              <span className="text-sm font-medium">
+                {syncMessage || `Found ${orphanedFiles.length} orphaned document(s) in RAG storage`}
+              </span>
+            </div>
+            {orphanedFiles.length > 0 && (
+              <button
+                onClick={handleSyncFiles}
+                disabled={isSyncing}
+                className="flex items-center gap-2 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-600/50 text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                {isSyncing ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={16} />
+                    Sync Now
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+          {orphanedFiles.length > 0 && (
+            <div className="mt-3 text-xs text-muted-foreground">
+              <p>Orphaned files (will be restored):</p>
+              <ul className="mt-1 ml-4 list-disc">
+                {orphanedFiles.map((f) => (
+                  <li key={f.filename}>
+                    {f.filename} ({f.chunk_count} chunks)
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="overflow-x-auto flex-1 p-0">
         <table className="w-full text-sm text-left min-w-[600px]">
           <thead className="bg-muted/5 text-muted-foreground font-medium uppercase text-xs">
             <tr>
               <th className="p-4">Name</th>
               <th className="p-4">Type</th>
-              <th className="p-4">Size</th>
               <th className="p-4">Status</th>
               <th className="p-4 text-right">Actions</th>
             </tr>
@@ -1729,16 +2002,15 @@ const DataSourcesView = () => {
           <tbody className="divide-y divide-border">
              {/* Processing Files (Client Side) */}
              {processingFiles.map((item) => (
-                <tr key={item.id} className="hover:bg-muted/5 group bg-muted/5">
-                  <td className="p-4 font-medium flex items-center gap-3">
-                    <div className="p-2 bg-muted rounded-lg text-muted-foreground">
-                        <FileText size={16} />
-                    </div>
-                    {item.file.name}
-                  </td>
-                  <td className="p-4 text-muted-foreground">{item.file.type || 'FILE'}</td>
-                  <td className="p-4 text-muted-foreground font-mono text-xs">{(item.file.size / 1024 / 1024).toFixed(2)} MB</td>
-                  <td className="p-4">
+                 <tr key={item.id} className="hover:bg-muted/5 group bg-muted/5">
+                   <td className="p-4 font-medium flex items-center gap-3">
+                     <div className="p-2 bg-muted rounded-lg text-muted-foreground">
+                         <FileText size={16} />
+                     </div>
+                     {item.file.name}
+                   </td>
+                   <td className="p-4 text-muted-foreground">{item.file.type || 'FILE'}</td>
+                   <td className="p-4">
                       <div className="flex flex-col gap-1 w-24">
                           <div className="flex justify-between text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
                              <span>Indexing...</span>
@@ -1764,16 +2036,15 @@ const DataSourcesView = () => {
                     : null;
 
                 return (
-                <tr key={i} className="hover:bg-muted/5 group">
-                  <td className="p-4 font-medium flex items-center gap-3">
-                    <div className="p-2 bg-muted rounded-lg text-muted-foreground">
-                        <FileText size={16} />
-                    </div>
-                    {file.filename}
-                  </td>
-                  <td className="p-4 text-muted-foreground">{file.content_type?.split('/')[1]?.toUpperCase() || 'FILE'}</td>
-                  <td className="p-4 text-muted-foreground font-mono text-xs">{(file.size_bytes / 1024 / 1024).toFixed(2)} MB</td>
-                  <td className="p-4">
+                 <tr key={i} className="hover:bg-muted/5 group">
+                   <td className="p-4 font-medium flex items-center gap-3">
+                     <div className="p-2 bg-muted rounded-lg text-muted-foreground">
+                         <FileText size={16} />
+                     </div>
+                     {file.filename}
+                   </td>
+                   <td className="p-4 text-muted-foreground">{file.content_type?.split('/')[1]?.toUpperCase() || 'FILE'}</td>
+                   <td className="p-4">
                       {progress !== null ? (
                           <div className="flex flex-col gap-1 w-32">
                               <div className="flex justify-between text-[10px] font-bold text-yellow-500">
@@ -1846,7 +2117,8 @@ const ReportsView: React.FC<{ analysisResult: AnalysisResponse | null }> = ({ an
   const createDailyTopRiskReport = async () => {
     try {
       const rankingsData: any = await new Promise((resolve, reject) => {
-        const es = new EventSource(`${API_BASE_URL}/districts/rankings`);
+        const token = HeatGuardAPI.getStoredToken();
+        const es = new EventSource(HeatGuardAPI.getRankingsStreamUrl(token));
         const timeout = window.setTimeout(() => {
           es.close();
           reject(new Error('Timeout loading rankings'));
@@ -2574,6 +2846,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   const [mortalityError, setMortalityError] = useState<string | null>(null);
   const [mortalityUpdatedAt, setMortalityUpdatedAt] = useState<string | null>(null);
   const [trendData, setTrendData] = useState<any[]>([]); // New State for Chart Data
+  const [trendLoading, setTrendLoading] = useState(false); // Loading state for trend data
 
   const mortalityTopItems = mortalityRiskItems.slice(0, 6);
 
@@ -2630,7 +2903,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     try {
       console.log('[Dashboard] Refetch requested.');
       await new Promise<void>((resolve, reject) => {
-        const es = new EventSource(`${API_BASE_URL}/districts/rankings?force=1&_ts=${Date.now()}`);
+        const token = HeatGuardAPI.getStoredToken();
+        const es = new EventSource(HeatGuardAPI.getRankingsStreamUrl(token) + `&force=1&_ts=${Date.now()}`);
         const timeout = window.setTimeout(() => {
           es.close();
           reject(new Error('Timeout refetching rankings'));
@@ -2688,6 +2962,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   // Fetch trend data when rankings update
   useEffect(() => {
     const fetchTrend = async () => {
+         setTrendLoading(true);
          const targetDistrict = rankings.length > 0 ? rankings[0].district_name : "Adilabad";
          try {
              const roundTemp = (value: number | null | undefined) =>
@@ -2759,12 +3034,14 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                return;
              }
 
-             setTrendData(days);
-         } catch (e) {
-             console.error("Failed to fetch trend data", e);
-             setTrendData([]);
-         }
-    };
+              setTrendData(days);
+          } catch (e) {
+              console.error("Failed to fetch trend data", e);
+              setTrendData([]);
+          } finally {
+              setTrendLoading(false);
+          }
+     };
 
     if (rankings.length > 0) {
        fetchTrend();
@@ -3060,7 +3337,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({
          </div>
 
          <div className="flex-1 w-full min-h-0">
-             {trendData.length > 0 ? (
+             {trendLoading ? (
+                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-3"></div>
+                     <span className="text-sm">Loading historical weather data...</span>
+                 </div>
+             ) : trendData.length > 0 ? (
                  <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={trendData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                         <defs>

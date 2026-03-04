@@ -46,7 +46,10 @@ class Settings(BaseSettings):
     # Mistral AI Configuration
     # ------------------------------------
     mistral_api_key: Optional[str] = None
-    mistral_model: str = "mistral-small-latest"
+    mistral_api_url: Optional[str] = (
+        "https://api.mistral.ai/v1"  # Default Mistral endpoint
+    )
+    mistral_model: str = "codestral-latest"  # Using codestral to avoid rate limits
 
     # ------------------------------------
     # Authentication (JWT)
@@ -77,6 +80,12 @@ class Settings(BaseSettings):
     risk_threshold_green: float = 0.3  # < 0.3 = Low risk (Green)
     risk_threshold_amber: float = 0.6  # 0.3-0.6 = Moderate risk (Amber)
     # > 0.6 = High risk (Red) - triggers full RAG protocol retrieval
+
+    # ------------------------------------
+    # Feature Flags
+    # ------------------------------------
+    use_local_mode: bool = False  # Use local models instead of external APIs
+    presentation_mode: bool = False  # Enable presentation/demo mode
 
     class Config:
         """Pydantic config to load from .env file."""
