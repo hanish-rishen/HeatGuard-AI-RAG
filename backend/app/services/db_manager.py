@@ -7,7 +7,7 @@ import json
 import logging
 import time  # MODIFIED: Added for connection retry delay
 from datetime import datetime
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -27,16 +27,16 @@ POSTGRES_URL_ENV_ORDER = (
 )
 
 
-def _collect_postgres_urls() -> List[tuple[str, str]]:
+def _collect_postgres_urls() -> List[Tuple[str, str]]:
     """Collect candidate PostgreSQL URLs from environment (in priority order)."""
-    urls: List[tuple[str, str]] = []
+    urls: List[Tuple[str, str]] = []
     for env_name in POSTGRES_URL_ENV_ORDER:
         value = os.getenv(env_name, "").strip()
         if value.startswith("postgresql"):
             urls.append((env_name, value))
 
     # De-duplicate while preserving order
-    unique_urls: List[tuple[str, str]] = []
+    unique_urls: List[Tuple[str, str]] = []
     seen = set()
     for env_name, value in urls:
         if value in seen:
@@ -169,8 +169,10 @@ class DBManager:
                         last_connect_error
                     ):
                         logger.error(
-                            "Pooler rejected DATABASE_URL. Configure a direct/non-pooling URL in "
-                            "DATABASE_DIRECT_URL or POSTGRES_URL_NON_POOLING."
+                            "Pooler rejected PostgreSQL URL from attempted env vars %s. "
+                            "Configure a direct/non-pooling URL in DATABASE_DIRECT_URL "
+                            "or POSTGRES_URL_NON_POOLING.",
+                            [env_name for env_name, _ in postgres_urls],
                         )
                     raise last_connect_error
                 else:
