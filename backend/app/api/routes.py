@@ -24,6 +24,7 @@ import json
 import asyncio
 import io
 import time
+from threading import Lock
 from typing import List, Optional, Dict, Any
 from fastapi.responses import StreamingResponse
 import hashlib
@@ -33,15 +34,27 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# PDF tools (PyMuPDF)
+# PDF tools (PyMuPDF) - lazy import to keep startup fast
 fitz = None
+fitz_lock = Lock()
 
-try:
-    import fitz  # PyMuPDF
-except ImportError as e:
-    logger.warning(f"PyMuPDF not found. File uploads might fail. Error: {e}")
-except Exception as e:
-    logger.warning(f"Error initializing PDF tools: {e}")
+
+def _get_fitz():
+    """Lazy-load PyMuPDF with a lock so concurrent requests initialize it once."""
+    global fitz
+    with fitz_lock:
+        if fitz is not None:
+            return fitz
+        try:
+            import fitz as pymupdf_fitz  # PyMuPDF
+
+            fitz = pymupdf_fitz
+            return fitz
+        except ImportError as e:
+            logger.warning(f"PyMuPDF not found. File uploads might fail. Error: {e}")
+        except Exception as e:
+            logger.warning(f"Error initializing PDF tools: {e}")
+        return None
 
 from app.schemas.models import (
     MortalityRiskResponse,
@@ -502,13 +515,14 @@ def process_document_background(
 
         # 1. Determine Extraction Strategy
         if content_type == "application/pdf":
-            if not fitz:
+            fitz_module = _get_fitz()
+            if not fitz_module:
                 logger.error("PyMuPDF (fitz) is not available.")
                 raise Exception("PyMuPDF (fitz) is not available on server.")
 
             try:
                 # Use PyMuPDF (fitz) for both text and image rendering
-                doc = fitz.open(stream=content, filetype="pdf")
+                doc = fitz_module.open(stream=content, filetype="pdf")
                 total_pages = len(doc)
                 logger.info(f"PDF {filename} loaded with {total_pages} pages.")
 

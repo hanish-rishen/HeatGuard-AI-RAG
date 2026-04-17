@@ -211,9 +211,21 @@ app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=li
 # WHY: Allow frontend to communicate with backend across different environments
 # In production, set CORS_ORIGINS env var to your frontend domain(s)
 cors_origins_env = os.getenv("CORS_ORIGINS")
-if cors_origins_env:
+
+
+def _normalize_origin(origin: str) -> str:
+    """Trim whitespace and surrounding quotes from a CORS origin entry."""
+    return origin.strip().strip("'\"")
+
+
+if cors_origins_env and cors_origins_env.strip():
     # Production: use specific origins from env var (comma-separated)
-    origins = [origin.strip() for origin in cors_origins_env.split(",")]
+    origins = [
+        _normalize_origin(origin)
+        for origin in cors_origins_env.split(",")
+        if _normalize_origin(origin)
+    ]
+    allow_origin_regex = None
 else:
     # Development: allow common local development ports
     origins = [
@@ -223,12 +235,21 @@ else:
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8000",
-        "*",  # Permissive for development - remove in production
     ]
+    # Permit Vercel-hosted frontend domains when explicit CORS_ORIGINS is not set.
+    allow_origin_regex = r"^https://[a-zA-Z0-9-]+\.vercel\.app$"
+
+print(f"[{settings.app_name}] CORS origins: {origins}", flush=True)
+if allow_origin_regex:
+    print(
+        f"[{settings.app_name}] CORS allow_origin_regex: {allow_origin_regex}",
+        flush=True,
+    )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
