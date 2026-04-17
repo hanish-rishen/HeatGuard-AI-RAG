@@ -33,7 +33,7 @@ def _collect_postgres_urls() -> List[Tuple[str, str]]:
     urls: List[Tuple[str, str]] = []
     for env_name in POSTGRES_URL_ENV_ORDER:
         value = os.getenv(env_name, "").strip()
-        if value.startswith("postgresql"):
+        if value.startswith("postgresql://") or value.startswith("postgres://"):
             urls.append((env_name, value))
 
     # De-duplicate while preserving order
@@ -166,15 +166,8 @@ class DBManager:
                                 connect_error,
                             )
 
-                    if last_connect_error is None:
-                        raise RuntimeError(
-                            "PostgreSQL connection failed but no exception details were captured"
-                        )
-
                     # Extra hint for common pooler misconfiguration
-                    if last_connect_error and "No pool configured for database" in str(
-                        last_connect_error
-                    ):
+                    if "No pool configured for database" in str(last_connect_error):
                         logger.error(
                             "Pooler rejected PostgreSQL URL from attempted env vars %s. "
                             "Configure a direct/non-pooling URL in DATABASE_DIRECT_URL "
