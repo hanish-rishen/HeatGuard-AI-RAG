@@ -42,8 +42,6 @@ fitz_lock = Lock()
 def _get_fitz():
     """Lazy-load PyMuPDF with a lock so concurrent requests initialize it once."""
     global fitz
-    if fitz is not None:
-        return fitz
     with fitz_lock:
         if fitz is not None:
             return fitz
