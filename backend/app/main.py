@@ -6,8 +6,8 @@ NEIGHBORHOOD:
 PURPOSE: Configures the ASGI application, middleware (CORS), and startup events.
 """
 
-import os
 import asyncio
+import os
 
 import uvicorn
 from fastapi import FastAPI
@@ -211,9 +211,13 @@ app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=li
 # WHY: Allow frontend to communicate with backend across different environments
 # In production, set CORS_ORIGINS env var to your frontend domain(s)
 cors_origins_env = os.getenv("CORS_ORIGINS")
-if cors_origins_env:
+if cors_origins_env and cors_origins_env.strip():
     # Production: use specific origins from env var (comma-separated)
-    origins = [origin.strip() for origin in cors_origins_env.split(",")]
+    origins = [
+        origin.strip().strip("'").strip('"')
+        for origin in cors_origins_env.split(",")
+        if origin.strip()
+    ]
 else:
     # Development: allow common local development ports
     origins = [
@@ -223,8 +227,10 @@ else:
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8000",
-        "*",  # Permissive for development - remove in production
+        "https://heatguard-ai.vercel.app",
     ]
+
+print(f"[{settings.app_name}] CORS origins: {origins}", flush=True)
 
 app.add_middleware(
     CORSMiddleware,
