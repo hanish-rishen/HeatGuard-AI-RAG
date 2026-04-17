@@ -211,12 +211,18 @@ app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=li
 # WHY: Allow frontend to communicate with backend across different environments
 # In production, set CORS_ORIGINS env var to your frontend domain(s)
 cors_origins_env = os.getenv("CORS_ORIGINS")
+
+
+def _normalize_origin(origin: str) -> str:
+    return origin.strip().strip("'\"")
+
+
 if cors_origins_env and cors_origins_env.strip():
     # Production: use specific origins from env var (comma-separated)
     origins = [
-        origin.strip().strip("'").strip('"')
+        _normalize_origin(origin)
         for origin in cors_origins_env.split(",")
-        if origin.strip()
+        if _normalize_origin(origin)
     ]
     allow_origin_regex = None
 else:
@@ -230,7 +236,7 @@ else:
         "http://127.0.0.1:8000",
     ]
     # Permit Vercel-hosted frontend domains when explicit CORS_ORIGINS is not set.
-    allow_origin_regex = r"https://.*\.vercel\.app"
+    allow_origin_regex = r"^https://[a-z0-9-]+\.vercel\.app$"
 
 print(f"[{settings.app_name}] CORS origins: {origins}", flush=True)
 if allow_origin_regex:

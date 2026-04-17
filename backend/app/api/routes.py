@@ -24,6 +24,7 @@ import json
 import asyncio
 import io
 import time
+from threading import Lock
 from typing import List, Optional, Dict, Any
 from fastapi.responses import StreamingResponse
 import hashlib
@@ -35,22 +36,26 @@ logger = logging.getLogger(__name__)
 
 # PDF tools (PyMuPDF) - lazy import to keep startup fast
 fitz = None
+fitz_lock = Lock()
 
 
 def _get_fitz():
     global fitz
     if fitz is not None:
         return fitz
-    try:
-        import fitz as pymupdf_fitz  # PyMuPDF
+    with fitz_lock:
+        if fitz is not None:
+            return fitz
+        try:
+            import fitz as pymupdf_fitz  # PyMuPDF
 
-        fitz = pymupdf_fitz
-        return fitz
-    except ImportError as e:
-        logger.warning(f"PyMuPDF not found. File uploads might fail. Error: {e}")
-    except Exception as e:
-        logger.warning(f"Error initializing PDF tools: {e}")
-    return None
+            fitz = pymupdf_fitz
+            return fitz
+        except ImportError as e:
+            logger.warning(f"PyMuPDF not found. File uploads might fail. Error: {e}")
+        except Exception as e:
+            logger.warning(f"Error initializing PDF tools: {e}")
+        return None
 
 from app.schemas.models import (
     MortalityRiskResponse,
