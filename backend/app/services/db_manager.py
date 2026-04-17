@@ -6,6 +6,7 @@ import os
 import json
 import logging
 import time  # MODIFIED: Added for connection retry delay
+from urllib.parse import urlparse
 from datetime import datetime
 from typing import List, Dict, Optional, Any, Tuple
 from contextlib import contextmanager
@@ -84,7 +85,8 @@ def _detect_database_type():
 
     if has_postgres_url:
         first_source, first_url = postgres_urls[0]
-        host = first_url.split("@")[1].split("/")[0] if "@" in first_url else "unknown"
+        parsed = urlparse(first_url)
+        host = parsed.hostname or "unknown"
         logger.info(
             "[MODE DETECTION] PostgreSQL URL detected from %s → Using POSTGRESQL (Deployed Mode)",
             first_source,
@@ -163,6 +165,11 @@ class DBManager:
                                 env_name,
                                 connect_error,
                             )
+
+                    if last_connect_error is None:
+                        raise RuntimeError(
+                            "PostgreSQL connection failed but no exception details were captured"
+                        )
 
                     # Extra hint for common pooler misconfiguration
                     if last_connect_error and "No pool configured for database" in str(
