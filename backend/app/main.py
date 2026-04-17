@@ -214,6 +214,7 @@ cors_origins_env = os.getenv("CORS_ORIGINS")
 
 
 def _normalize_origin(origin: str) -> str:
+    """Trim whitespace and surrounding quotes from a CORS origin entry."""
     return origin.strip().strip("'\"")
 
 
@@ -236,7 +237,7 @@ else:
         "http://127.0.0.1:8000",
     ]
     # Permit Vercel-hosted frontend domains when explicit CORS_ORIGINS is not set.
-    allow_origin_regex = r"^https://[a-z0-9-]+\.vercel\.app$"
+    allow_origin_regex = r"^https://[a-zA-Z0-9-]+\.vercel\.app$"
 
 print(f"[{settings.app_name}] CORS origins: {origins}", flush=True)
 if allow_origin_regex:
