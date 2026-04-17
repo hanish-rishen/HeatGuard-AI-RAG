@@ -167,7 +167,8 @@ class DBManager:
                             )
 
                     # Extra hint for common pooler misconfiguration
-                    if "No pool configured for database" in str(last_connect_error):
+                    error_text = str(last_connect_error).lower()
+                    if "no pool configured" in error_text and "database" in error_text:
                         logger.error(
                             "Pooler rejected PostgreSQL URL from attempted env vars %s. "
                             "Configure a direct/non-pooling URL in DATABASE_DIRECT_URL "
