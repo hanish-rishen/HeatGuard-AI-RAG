@@ -150,11 +150,14 @@ class DBManager:
                     postgres_urls = _collect_postgres_urls()
                     if not postgres_urls:
                         raise ValueError(
-                            "PostgreSQL mode enabled but no valid URL found. Set one of: "
+                            "PostgreSQL mode enabled but no valid URL found. Checked env vars: "
                             + ", ".join(POSTGRES_URL_ENV_ORDER)
+                            + ". Values must start with 'postgresql://' or 'postgres://'."
                         )
 
-                    last_connect_error = None
+                    last_connect_error: Exception = RuntimeError(
+                        "PostgreSQL connection failed"
+                    )
                     for env_name, database_url in postgres_urls:
                         try:
                             return psycopg2.connect(database_url)
