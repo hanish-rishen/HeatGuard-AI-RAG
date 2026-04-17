@@ -73,6 +73,7 @@ Push your code to GitHub and deploy on Leapcell. The app will automatically:
 
 ### Database connection fails
 - Check `DATABASE_URL` format: `postgresql://user:pass@host:port/db`
+- If your provider uses poolers and logs show `No pool configured for database`, set `DATABASE_DIRECT_URL` to a direct/non-pooling PostgreSQL URL
 - Ensure PostgreSQL instance is in "Running" state
 
 ### Redis connection fails

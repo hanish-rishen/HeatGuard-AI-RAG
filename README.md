@@ -559,6 +559,7 @@ Frontend will start at `http://localhost:5173`
 | `USE_LOCAL_MODE` | `false` | Force SQLite instead of PostgreSQL |
 | `PRESENTATION_MODE` | `false` | Demo mode with pre-computed data |
 | `DATABASE_URL` | - | PostgreSQL connection string |
+| `DATABASE_DIRECT_URL` | - | Optional direct/non-pooling PostgreSQL URL (preferred fallback) |
 | `JWT_SECRET_KEY` | - | JWT signing key (generate with `openssl rand -hex 32`) |
 | `MISTRAL_API_KEY` | - | Mistral AI API key |
 | `MISTRAL_API_URL` | `https://api.mistral.ai/v1` | LLM endpoint |

@@ -16,6 +16,35 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Prefer direct/non-pooling URLs first, then pooled/default URLs.
+POSTGRES_URL_ENV_ORDER = (
+    "DATABASE_DIRECT_URL",
+    "POSTGRES_URL_NON_POOLING",
+    "DIRECT_URL",
+    "SUPABASE_DB_URL",
+    "DATABASE_URL",
+    "POSTGRES_URL",
+)
+
+
+def _collect_postgres_urls() -> List[tuple[str, str]]:
+    """Collect candidate PostgreSQL URLs from environment (in priority order)."""
+    urls: List[tuple[str, str]] = []
+    for env_name in POSTGRES_URL_ENV_ORDER:
+        value = os.getenv(env_name, "").strip()
+        if value.startswith("postgresql"):
+            urls.append((env_name, value))
+
+    # De-duplicate while preserving order
+    unique_urls: List[tuple[str, str]] = []
+    seen = set()
+    for env_name, value in urls:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique_urls.append((env_name, value))
+    return unique_urls
+
 # Load .env file explicitly before checking DATABASE_URL
 # This ensures local development can use PostgreSQL via .env
 env_path = Path(__file__).parent.parent.parent / ".env"
@@ -49,20 +78,21 @@ def _detect_database_type():
             f"[MODE DETECTION] Could not load settings, falling back to env check: {e}"
         )
 
-    # MODIFIED: Otherwise use existing DATABASE_URL logic
-    database_url = os.getenv("DATABASE_URL", "")
-    has_postgres_url = database_url.startswith("postgresql")
+    # MODIFIED: Otherwise detect PostgreSQL from supported URL env vars
+    postgres_urls = _collect_postgres_urls()
+    has_postgres_url = len(postgres_urls) > 0
 
     if has_postgres_url:
+        first_source, first_url = postgres_urls[0]
+        host = first_url.split("@")[1].split("/")[0] if "@" in first_url else "unknown"
         logger.info(
-            f"[MODE DETECTION] DATABASE_URL starts with 'postgresql' → Using POSTGRESQL (Deployed Mode)"
+            "[MODE DETECTION] PostgreSQL URL detected from %s → Using POSTGRESQL (Deployed Mode)",
+            first_source,
         )
-        logger.info(
-            f"[MODE DETECTION] Database host: {database_url.split('@')[1].split('/')[0] if '@' in database_url else 'unknown'}"
-        )
+        logger.info("[MODE DETECTION] Database host: %s", host)
     else:
         logger.info(
-            f"[MODE DETECTION] DATABASE_URL not set or not PostgreSQL → Using SQLITE (Fallback)"
+            "[MODE DETECTION] No valid PostgreSQL URL found in supported env vars → Using SQLITE (Fallback)"
         )
 
     return has_postgres_url
@@ -115,8 +145,34 @@ class DBManager:
         for attempt in range(1, max_retries + 1):
             try:
                 if USE_POSTGRES:
-                    database_url = os.getenv("DATABASE_URL")
-                    return psycopg2.connect(database_url)
+                    postgres_urls = _collect_postgres_urls()
+                    if not postgres_urls:
+                        raise ValueError(
+                            "PostgreSQL mode enabled but no valid URL found. Set one of: "
+                            + ", ".join(POSTGRES_URL_ENV_ORDER)
+                        )
+
+                    last_connect_error = None
+                    for env_name, database_url in postgres_urls:
+                        try:
+                            return psycopg2.connect(database_url)
+                        except Exception as connect_error:
+                            last_connect_error = connect_error
+                            logger.warning(
+                                "PostgreSQL connect failed using %s: %s",
+                                env_name,
+                                connect_error,
+                            )
+
+                    # Extra hint for common pooler misconfiguration
+                    if last_connect_error and "No pool configured for database" in str(
+                        last_connect_error
+                    ):
+                        logger.error(
+                            "Pooler rejected DATABASE_URL. Configure a direct/non-pooling URL in "
+                            "DATABASE_DIRECT_URL or POSTGRES_URL_NON_POOLING."
+                        )
+                    raise last_connect_error
                 else:
                     # SQLite fallback for local development
                     import tempfile
