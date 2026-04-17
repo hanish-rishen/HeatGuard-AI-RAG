@@ -6,8 +6,8 @@ NEIGHBORHOOD:
 PURPOSE: Configures the ASGI application, middleware (CORS), and startup events.
 """
 
-import asyncio
 import os
+import asyncio
 
 import uvicorn
 from fastapi import FastAPI
@@ -218,6 +218,7 @@ if cors_origins_env and cors_origins_env.strip():
         for origin in cors_origins_env.split(",")
         if origin.strip()
     ]
+    allow_origin_regex = None
 else:
     # Development: allow common local development ports
     origins = [
@@ -227,14 +228,21 @@ else:
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8000",
-        "https://heatguard-ai.vercel.app",
     ]
+    # Permit Vercel-hosted frontend domains when explicit CORS_ORIGINS is not set.
+    allow_origin_regex = r"https://.*\.vercel\.app"
 
 print(f"[{settings.app_name}] CORS origins: {origins}", flush=True)
+if allow_origin_regex:
+    print(
+        f"[{settings.app_name}] CORS allow_origin_regex: {allow_origin_regex}",
+        flush=True,
+    )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
