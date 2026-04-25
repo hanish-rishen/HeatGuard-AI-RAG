@@ -2,23 +2,15 @@
 Redis Cache Manager - For fast caching of frequently accessed data
 """
 
-import os
 import json
 import logging
 from typing import Optional, Any, Dict, List
 from datetime import datetime, timedelta
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Check if Redis is configured
-USE_REDIS = bool(os.getenv("REDIS_URL"))
-
-if USE_REDIS:
-    import redis
-
-    logger.info("Redis caching enabled")
-else:
-    logger.info("Redis not configured - using in-memory fallback")
+USE_REDIS = False
 
 
 class CacheManager:
@@ -39,21 +31,30 @@ class CacheManager:
         self._initialized = True
         self._memory_cache = {}  # Fallback for local dev
         self._redis = None
+        settings = get_settings()
+        redis_url = settings.get_effective_redis_url()
+
+        global USE_REDIS
+        USE_REDIS = bool(redis_url)
 
         if USE_REDIS:
             try:
-                redis_url = os.getenv("REDIS_URL")
+                import redis
+
                 self._redis = redis.from_url(redis_url, decode_responses=True)
                 logger.info(f"Connected to Redis")
             except Exception as e:
                 logger.error(f"Failed to connect to Redis: {e}")
                 self._redis = None
+        else:
+            logger.info("Redis not configured - using in-memory fallback")
 
     def _get_ttl(self, default_ttl: int = None) -> int:
         """Get TTL in seconds."""
         if default_ttl:
             return default_ttl
-        return int(os.getenv("REDIS_TTL", "86400"))  # Default 24 hours
+        settings = get_settings()
+        return settings.redis_ttl
 
     def get(self, key: str) -> Optional[Any]:
         """Get value from cache."""

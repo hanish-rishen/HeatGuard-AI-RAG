@@ -300,7 +300,6 @@ class PredictiveEngine:
 
     def is_loaded(self) -> bool:
         """Check if models are successfully loaded."""
-        self._ensure_loaded()
         return self.model is not None and self.encoder is not None
 
     def get_supported_districts(self) -> list:

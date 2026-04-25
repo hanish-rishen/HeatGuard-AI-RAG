@@ -7,11 +7,12 @@ NEIGHBORHOOD:
 PURPOSE: Centralizes all configuration settings loaded from environment variables.
 """
 
-import os
 from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+DEFAULT_SQLITE_DB = "heatguard.db"
 
 
 class Settings(BaseSettings):
@@ -86,6 +87,7 @@ class Settings(BaseSettings):
     # ------------------------------------
     use_local_mode: bool = False  # Use local models instead of external APIs
     presentation_mode: bool = False  # Enable presentation/demo mode
+    enable_scheduler: bool = False  # Enable APScheduler periodic background refresh tasks
 
     class Config:
         """Pydantic config to load from .env file."""
@@ -93,6 +95,18 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+
+    def get_effective_database_url(self) -> Optional[str]:
+        """Resolve DB URL with SQLite fallback for local mode or missing DB URL."""
+        if self.use_local_mode or not self.database_url:
+            return f"sqlite:///./{DEFAULT_SQLITE_DB}"
+        return self.database_url
+
+    def get_effective_redis_url(self) -> Optional[str]:
+        """Resolve Redis URL, disabled in local mode."""
+        if self.use_local_mode:
+            return None
+        return self.redis_url
 
 
 @lru_cache()

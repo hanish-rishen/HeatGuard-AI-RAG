@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 # MODIFIED: Import get_settings at the top
-from app.core.config import get_settings
+from app.core.config import get_settings, DEFAULT_SQLITE_DB, get_backend_dir
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,7 @@ def _detect_database_type():
             f"[MODE DETECTION] Could not load settings, falling back to env check: {e}"
         )
 
-    # MODIFIED: Otherwise use existing DATABASE_URL logic
-    database_url = os.getenv("DATABASE_URL", "")
+    database_url = settings.get_effective_database_url() or ""
     has_postgres_url = database_url.startswith("postgresql")
 
     if has_postgres_url:
@@ -85,7 +84,6 @@ if USE_POSTGRES:
     logger.info("PostgreSQL mode enabled - will connect to remote database")
 else:
     import sqlite3
-    from app.core.config import get_backend_dir
 
     logger.info("SQLite mode enabled - using local file database")
 
@@ -115,26 +113,14 @@ class DBManager:
         for attempt in range(1, max_retries + 1):
             try:
                 if USE_POSTGRES:
-                    database_url = os.getenv("DATABASE_URL")
+                    settings = get_settings()
+                    database_url = settings.get_effective_database_url()
                     return psycopg2.connect(database_url)
                 else:
-                    # SQLite fallback for local development
-                    import tempfile
-                    import os as os_module
-
-                    if os_module.name == "nt":  # Windows
-                        db_path = Path(get_backend_dir()) / "district_analytics.db"
-                    else:
-                        tmp_path = Path("/tmp") / "district_analytics.db"
-                        try:
-                            tmp_path.parent.mkdir(parents=True, exist_ok=True)
-                            test_file = tmp_path.parent / ".write_test"
-                            test_file.touch()
-                            test_file.unlink()
-                            db_path = tmp_path
-                        except (OSError, PermissionError):
-                            db_path = Path(get_backend_dir()) / "district_analytics.db"
-
+                    # SQLite fallback for local mode
+                    settings = get_settings()
+                    sqlite_url = settings.get_effective_database_url()
+                    db_path = self._resolve_sqlite_path(sqlite_url)
                     return sqlite3.connect(db_path)
             except Exception as e:
                 last_error = e
@@ -152,6 +138,16 @@ class DBManager:
 
         # MODIFIED: Only throw error after all retries exhausted
         raise last_error
+
+    def _resolve_sqlite_path(self, sqlite_url: str) -> Path:
+        """Resolve sqlite:/// URL into a local filesystem path."""
+        if not sqlite_url:
+            return Path(get_backend_dir()) / DEFAULT_SQLITE_DB
+        if sqlite_url.startswith("sqlite:///./"):
+            return Path(get_backend_dir()) / sqlite_url.replace("sqlite:///./", "", 1)
+        if sqlite_url.startswith("sqlite:///"):
+            return Path(sqlite_url.replace("sqlite:///", "", 1))
+        return Path(get_backend_dir()) / DEFAULT_SQLITE_DB
 
     def init_db(self):
         """Initialize database schema."""
