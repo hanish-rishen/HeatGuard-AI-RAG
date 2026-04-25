@@ -127,8 +127,8 @@ If you see CORS errors in the browser:
 
 ### Database Errors
 The database automatically initializes on first use:
-- **Local**: `backend/district_analytics.db`
-- **Leapcell**: `/tmp/district_analytics.db`
+- **Local mode (`USE_LOCAL_MODE=true`)**: `backend/heatguard.db`
+- **Deployed mode**: Uses `DATABASE_URL` (PostgreSQL recommended)
 
 ### Authentication Issues
 If login fails:

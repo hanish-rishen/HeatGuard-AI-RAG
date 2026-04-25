@@ -19,6 +19,20 @@ from app.api.routes import router as api_router
 
 settings = get_settings()
 effective_database_url = settings.get_effective_database_url()
+database_type = (
+    "SQLite (Local File)"
+    if effective_database_url.startswith("sqlite")
+    else "PostgreSQL (Remote)"
+)
+masked_database_url = (
+    "Not set (using SQLite)"
+    if not effective_database_url
+    else (
+        effective_database_url.split("@")[0] + "@..."
+        if "@" in effective_database_url
+        else effective_database_url
+    )
+)
 
 # Log startup mode information
 print(f"[{settings.app_name}] {'=' * 50}", flush=True)
@@ -33,11 +47,11 @@ print(
     flush=True,
 )
 print(
-    f"[{settings.app_name}] Database: {'SQLite (Local File)' if settings.use_local_mode or not effective_database_url or effective_database_url.startswith('sqlite') else 'PostgreSQL (Remote)'}",
+    f"[{settings.app_name}] Database: {database_type}",
     flush=True,
 )
 print(
-    f"[{settings.app_name}] Database URL: {'Not set (using SQLite)' if not effective_database_url else effective_database_url.split('@')[0] + '@...' if '@' in effective_database_url else effective_database_url}",
+    f"[{settings.app_name}] Database URL: {masked_database_url}",
     flush=True,
 )
 print(f"[{settings.app_name}] Debug Mode: {settings.debug}", flush=True)
@@ -240,9 +254,7 @@ else:
         "http://127.0.0.1:8000",
     ]
     # Permit Vercel and Render-hosted frontend domains when CORS_ORIGINS is not set.
-    allow_origin_regex = (
-        r"^https://[a-zA-Z0-9-]+\.vercel\.app$|^https://[a-zA-Z0-9-]+\.onrender\.com$"
-    )
+    allow_origin_regex = r"^https://[a-zA-Z0-9-]+\.(vercel\.app|onrender\.com)$"
 
 print(f"[{settings.app_name}] CORS origins: {origins}", flush=True)
 if allow_origin_regex:
