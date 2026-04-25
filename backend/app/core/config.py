@@ -12,6 +12,8 @@ from typing import Optional
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
+DEFAULT_SQLITE_DB = "heatguard.db"
+
 
 class Settings(BaseSettings):
     """
@@ -85,7 +87,7 @@ class Settings(BaseSettings):
     # ------------------------------------
     use_local_mode: bool = False  # Use local models instead of external APIs
     presentation_mode: bool = False  # Enable presentation/demo mode
-    enable_scheduler: bool = False  # Enable APScheduler refresh in long-running deployments
+    enable_scheduler: bool = False  # Enable APScheduler periodic background refresh tasks
 
     class Config:
         """Pydantic config to load from .env file."""
@@ -97,7 +99,7 @@ class Settings(BaseSettings):
     def get_effective_database_url(self) -> Optional[str]:
         """Resolve database URL with local-mode SQLite fallback."""
         if self.use_local_mode or not self.database_url:
-            return "sqlite:///./heatguard.db"
+            return f"sqlite:///./{DEFAULT_SQLITE_DB}"
         return self.database_url
 
     def get_effective_redis_url(self) -> Optional[str]:

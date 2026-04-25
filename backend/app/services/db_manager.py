@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 # MODIFIED: Import get_settings at the top
-from app.core.config import get_settings
+from app.core.config import get_settings, DEFAULT_SQLITE_DB
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,7 @@ class DBManager:
             return Path(get_backend_dir()) / sqlite_url.replace("sqlite:///./", "", 1)
         if sqlite_url.startswith("sqlite:///"):
             return Path(sqlite_url.replace("sqlite:///", "", 1))
-        return Path(get_backend_dir()) / "heatguard.db"
+        return Path(get_backend_dir()) / DEFAULT_SQLITE_DB
 
     def init_db(self):
         """Initialize database schema."""

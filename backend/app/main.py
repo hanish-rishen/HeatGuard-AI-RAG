@@ -71,7 +71,7 @@ async def background_init():
 
     print(f"[{settings.app_name}] Background init starting...", flush=True)
 
-    # Warm lightweight metadata only; keep heavy ML/vector resources lazy.
+    # Warming lightweight metadata only; keep heavy ML/vector resources lazy.
     try:
         from app.services.data_fetcher import data_fetcher
 
@@ -252,9 +252,10 @@ else:
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8000",
+        "https://heatguard-ai.vercel.app",
+        "https://heatguard-frontend.onrender.com",
     ]
-    # Permit Vercel and Render-hosted frontend domains when CORS_ORIGINS is not set.
-    allow_origin_regex = r"^https://[a-zA-Z0-9-]+\.(vercel\.app|onrender\.com)$"
+    allow_origin_regex = None
 
 print(f"[{settings.app_name}] CORS origins: {origins}", flush=True)
 if allow_origin_regex:
