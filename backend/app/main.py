@@ -28,9 +28,13 @@ masked_database_url = (
     "Not set (using SQLite)"
     if not effective_database_url
     else (
-        effective_database_url.split("@")[0] + "@..."
-        if "@" in effective_database_url
-        else effective_database_url
+        f"sqlite:///.../{effective_database_url.split('/')[-1]}"
+        if effective_database_url.startswith("sqlite:///")
+        else (
+            effective_database_url.split("@")[0] + "@..."
+            if "@" in effective_database_url
+            else effective_database_url
+        )
     )
 )
 
@@ -71,7 +75,7 @@ async def background_init():
 
     print(f"[{settings.app_name}] Background init starting...", flush=True)
 
-    # Warming lightweight metadata only; keep heavy ML/vector resources lazy.
+    # Warming up lightweight metadata only; keep heavy ML/vector resources lazy.
     try:
         from app.services.data_fetcher import data_fetcher
 

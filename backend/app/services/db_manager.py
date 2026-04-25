@@ -142,6 +142,8 @@ class DBManager:
 
     def _resolve_sqlite_path(self, sqlite_url: str) -> Path:
         """Resolve sqlite:/// URL into a local filesystem path."""
+        if not sqlite_url:
+            return Path(get_backend_dir()) / DEFAULT_SQLITE_DB
         if sqlite_url.startswith("sqlite:///./"):
             return Path(get_backend_dir()) / sqlite_url.replace("sqlite:///./", "", 1)
         if sqlite_url.startswith("sqlite:///"):
