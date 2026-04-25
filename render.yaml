@@ -8,7 +8,7 @@ services:
     runtime: docker
     plan: free
     dockerContext: .
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: Dockerfile
     envVars:
       - key: PORT
         value: 10000

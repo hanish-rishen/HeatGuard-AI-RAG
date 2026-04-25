@@ -97,7 +97,7 @@ class Settings(BaseSettings):
         case_sensitive = False
 
     def get_effective_database_url(self) -> Optional[str]:
-        """Resolve database URL with local-mode SQLite fallback."""
+        """Resolve DB URL with SQLite fallback for local mode or missing DB URL."""
         if self.use_local_mode or not self.database_url:
             return f"sqlite:///./{DEFAULT_SQLITE_DB}"
         return self.database_url

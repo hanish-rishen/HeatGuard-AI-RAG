@@ -24,19 +24,19 @@ database_type = (
     if effective_database_url.startswith("sqlite")
     else "PostgreSQL (Remote)"
 )
-masked_database_url = (
-    "Not set (using SQLite)"
-    if not effective_database_url
-    else (
-        f"sqlite:///.../{effective_database_url.split('/')[-1]}"
-        if effective_database_url.startswith("sqlite:///")
-        else (
-            effective_database_url.split("@")[0] + "@..."
-            if "@" in effective_database_url
-            else effective_database_url
-        )
-    )
-)
+
+
+def _mask_database_url(database_url: str) -> str:
+    if not database_url:
+        return "Not set (using SQLite)"
+    if database_url.startswith("sqlite:///"):
+        return f"sqlite:///.../{database_url.split('/')[-1]}"
+    if "@" in database_url:
+        return database_url.split("@")[0] + "@..."
+    return database_url
+
+
+masked_database_url = _mask_database_url(effective_database_url)
 
 # Log startup mode information
 print(f"[{settings.app_name}] {'=' * 50}", flush=True)
@@ -75,7 +75,7 @@ async def background_init():
 
     print(f"[{settings.app_name}] Background init starting...", flush=True)
 
-    # Warming up lightweight metadata only; keep heavy ML/vector resources lazy.
+    # Warm up lightweight metadata only; keep heavy ML/vector resources lazy.
     try:
         from app.services.data_fetcher import data_fetcher
 
