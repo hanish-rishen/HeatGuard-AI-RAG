@@ -111,6 +111,7 @@ async def background_init():
             print(f"[{settings.app_name}] Warning: Scheduler failed: {e}", flush=True)
             # Continue - we'll check for data separately
     else:
+        # Recommended for Render free-tier demos to reduce startup RAM and background CPU.
         print(
             f"[{settings.app_name}] Scheduler disabled (ENABLE_SCHEDULER=false).",
             flush=True,

@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 # MODIFIED: Import get_settings at the top
-from app.core.config import get_settings, DEFAULT_SQLITE_DB
+from app.core.config import get_settings, DEFAULT_SQLITE_DB, get_backend_dir
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,6 @@ if USE_POSTGRES:
     logger.info("PostgreSQL mode enabled - will connect to remote database")
 else:
     import sqlite3
-    from app.core.config import get_backend_dir
 
     logger.info("SQLite mode enabled - using local file database")
 
