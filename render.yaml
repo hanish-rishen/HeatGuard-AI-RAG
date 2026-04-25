@@ -5,10 +5,10 @@
 services:
   - type: web
     name: heatguard-api
-    runtime: python
+    runtime: docker
     plan: free
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
@@ -17,6 +17,10 @@ services:
       - key: HOST
         value: 0.0.0.0
       - key: DEBUG
+        value: "false"
+      - key: USE_LOCAL_MODE
+        value: "false"
+      - key: ENABLE_SCHEDULER
         value: "false"
       # Add your environment variables here or in Render dashboard
       - key: JWT_SECRET_KEY
@@ -48,7 +52,7 @@ services:
       - key: RISK_THRESHOLD_AMBER
         value: "0.6"
       - key: CORS_ORIGINS
-        value: https://heatguard-ai.vercel.app  # Update with your frontend URL
+        value: https://heatguard-frontend.onrender.com,https://heatguard-ai.vercel.app
     autoDeploy: true
     healthCheckPath: /kaithheathcheck
 
@@ -56,7 +60,7 @@ services:
   - type: cron
     name: heatguard-daily-compute
     runtime: python
-    plan: starter  # Free tier for cron jobs
+    plan: starter
     buildCommand: pip install -r backend/requirements.txt
     schedule: "0 5 * * *"  # 5:00 AM IST (11:30 PM UTC)
     startCommand: cd backend && python -m app.cron.daily_rankings

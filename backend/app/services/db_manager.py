@@ -49,8 +49,7 @@ def _detect_database_type():
             f"[MODE DETECTION] Could not load settings, falling back to env check: {e}"
         )
 
-    # MODIFIED: Otherwise use existing DATABASE_URL logic
-    database_url = os.getenv("DATABASE_URL", "")
+    database_url = settings.get_effective_database_url() or ""
     has_postgres_url = database_url.startswith("postgresql")
 
     if has_postgres_url:
@@ -115,26 +114,12 @@ class DBManager:
         for attempt in range(1, max_retries + 1):
             try:
                 if USE_POSTGRES:
-                    database_url = os.getenv("DATABASE_URL")
+                    settings = get_settings()
+                    database_url = settings.get_effective_database_url()
                     return psycopg2.connect(database_url)
                 else:
-                    # SQLite fallback for local development
-                    import tempfile
-                    import os as os_module
-
-                    if os_module.name == "nt":  # Windows
-                        db_path = Path(get_backend_dir()) / "district_analytics.db"
-                    else:
-                        tmp_path = Path("/tmp") / "district_analytics.db"
-                        try:
-                            tmp_path.parent.mkdir(parents=True, exist_ok=True)
-                            test_file = tmp_path.parent / ".write_test"
-                            test_file.touch()
-                            test_file.unlink()
-                            db_path = tmp_path
-                        except (OSError, PermissionError):
-                            db_path = Path(get_backend_dir()) / "district_analytics.db"
-
+                    # SQLite fallback for local mode
+                    db_path = Path(get_backend_dir()) / "heatguard.db"
                     return sqlite3.connect(db_path)
             except Exception as e:
                 last_error = e

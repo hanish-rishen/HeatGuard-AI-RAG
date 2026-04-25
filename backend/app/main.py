@@ -18,6 +18,7 @@ from app.core.config import get_settings
 from app.api.routes import router as api_router
 
 settings = get_settings()
+effective_database_url = settings.get_effective_database_url()
 
 # Log startup mode information
 print(f"[{settings.app_name}] {'=' * 50}", flush=True)
@@ -32,11 +33,11 @@ print(
     flush=True,
 )
 print(
-    f"[{settings.app_name}] Database: {'SQLite (Local File)' if settings.use_local_mode or not settings.database_url else 'PostgreSQL (Remote)'}",
+    f"[{settings.app_name}] Database: {'SQLite (Local File)' if settings.use_local_mode or not effective_database_url or effective_database_url.startswith('sqlite') else 'PostgreSQL (Remote)'}",
     flush=True,
 )
 print(
-    f"[{settings.app_name}] Database URL: {'Not set (using SQLite)' if not settings.database_url else settings.database_url.split('@')[0] + '@...' if '@' in settings.database_url else 'Set'}",
+    f"[{settings.app_name}] Database URL: {'Not set (using SQLite)' if not effective_database_url else effective_database_url.split('@')[0] + '@...' if '@' in effective_database_url else effective_database_url}",
     flush=True,
 )
 print(f"[{settings.app_name}] Debug Mode: {settings.debug}", flush=True)
@@ -56,44 +57,46 @@ async def background_init():
 
     print(f"[{settings.app_name}] Background init starting...", flush=True)
 
-    # Pre-load ML models
+    # Warm lightweight metadata only; keep heavy ML/vector resources lazy.
     try:
-        from app.services.predictive_engine import predictive_engine
-        from app.services.prescriptive_engine import prescriptive_engine
         from app.services.data_fetcher import data_fetcher
 
-        _ = predictive_engine.is_loaded()
-        _ = prescriptive_engine.is_initialized()
         _ = data_fetcher.get_all_districts()
 
-        print(f"[{settings.app_name}] All engines loaded!", flush=True)
+        print(f"[{settings.app_name}] Background metadata warmup complete.", flush=True)
     except Exception as e:
-        print(f"[{settings.app_name}] Warning: Engine load failed: {e}", flush=True)
+        print(f"[{settings.app_name}] Warning: Metadata warmup failed: {e}", flush=True)
         return  # Don't mark ready if engines failed
 
-    # Start scheduler and run initial computation (only if needed - saves Leapcell resources)
-    try:
-        from app.scheduler import (
-            setup_scheduler,
-            start_scheduler,
-            run_initial_computation_if_needed,
+    if settings.enable_scheduler:
+        # Start scheduler and run initial computation (only if needed)
+        try:
+            from app.scheduler import (
+                setup_scheduler,
+                start_scheduler,
+                run_initial_computation_if_needed,
+            )
+
+            setup_scheduler()
+            start_scheduler()
+
+            # Only compute if data is missing or stale
+            print(f"[{settings.app_name}] Checking for existing data...", flush=True)
+            await run_initial_computation_if_needed()
+            print(f"[{settings.app_name}] Data check complete!", flush=True)
+
+            # Small delay to ensure database transaction is fully committed
+            await asyncio.sleep(1)
+
+            print(f"[{settings.app_name}] Scheduler started!", flush=True)
+        except Exception as e:
+            print(f"[{settings.app_name}] Warning: Scheduler failed: {e}", flush=True)
+            # Continue - we'll check for data separately
+    else:
+        print(
+            f"[{settings.app_name}] Scheduler disabled (ENABLE_SCHEDULER=false).",
+            flush=True,
         )
-
-        setup_scheduler()
-        start_scheduler()
-
-        # Only compute if data is missing or stale (saves Leapcell resources)
-        print(f"[{settings.app_name}] Checking for existing data...", flush=True)
-        await run_initial_computation_if_needed()
-        print(f"[{settings.app_name}] Data check complete!", flush=True)
-
-        # Small delay to ensure database transaction is fully committed
-        await asyncio.sleep(1)
-
-        print(f"[{settings.app_name}] Scheduler started!", flush=True)
-    except Exception as e:
-        print(f"[{settings.app_name}] Warning: Scheduler failed: {e}", flush=True)
-        # Continue - we'll check for data separately
 
     # Clear any stale Redis cache to ensure fresh data is served
     try:
@@ -236,8 +239,10 @@ else:
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8000",
     ]
-    # Permit Vercel-hosted frontend domains when explicit CORS_ORIGINS is not set.
-    allow_origin_regex = r"^https://[a-zA-Z0-9-]+\.vercel\.app$"
+    # Permit Vercel and Render-hosted frontend domains when CORS_ORIGINS is not set.
+    allow_origin_regex = (
+        r"^https://[a-zA-Z0-9-]+\.vercel\.app$|^https://[a-zA-Z0-9-]+\.onrender\.com$"
+    )
 
 print(f"[{settings.app_name}] CORS origins: {origins}", flush=True)
 if allow_origin_regex:

@@ -88,6 +88,7 @@ except Exception as e:
 
 router = APIRouter()
 settings = get_settings()
+effective_database_url = settings.get_effective_database_url()
 
 
 def _hash_password(password: str, secret: str) -> str:
@@ -268,7 +269,7 @@ async def system_status():
             "presentation_mode": settings.presentation_mode,
             "deployment_type": "local"
             if settings.use_local_mode
-            else ("deployed" if settings.database_url else "unknown"),
+            else ("deployed" if effective_database_url else "unknown"),
         },
         "database": {"connected": False, "type": "unknown", "records": 0},
         "redis": {"connected": False, "cached_keys": 0},

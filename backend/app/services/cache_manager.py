@@ -7,11 +7,13 @@ import json
 import logging
 from typing import Optional, Any, Dict, List
 from datetime import datetime, timedelta
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Check if Redis is configured
-USE_REDIS = bool(os.getenv("REDIS_URL"))
+settings = get_settings()
+REDIS_URL = settings.get_effective_redis_url()
+USE_REDIS = bool(REDIS_URL)
 
 if USE_REDIS:
     import redis
@@ -42,8 +44,7 @@ class CacheManager:
 
         if USE_REDIS:
             try:
-                redis_url = os.getenv("REDIS_URL")
-                self._redis = redis.from_url(redis_url, decode_responses=True)
+                self._redis = redis.from_url(REDIS_URL, decode_responses=True)
                 logger.info(f"Connected to Redis")
             except Exception as e:
                 logger.error(f"Failed to connect to Redis: {e}")

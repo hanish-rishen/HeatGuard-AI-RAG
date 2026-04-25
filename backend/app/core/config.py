@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     # ------------------------------------
     use_local_mode: bool = False  # Use local models instead of external APIs
     presentation_mode: bool = False  # Enable presentation/demo mode
+    enable_scheduler: bool = False  # Enable APScheduler background refresh cycle
 
     class Config:
         """Pydantic config to load from .env file."""
@@ -93,6 +94,18 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+
+    def get_effective_database_url(self) -> Optional[str]:
+        """Resolve database URL with local-mode SQLite fallback."""
+        if self.use_local_mode:
+            return "sqlite:///./heatguard.db"
+        return os.getenv("DATABASE_URL") or self.database_url
+
+    def get_effective_redis_url(self) -> Optional[str]:
+        """Resolve Redis URL, disabled in local mode."""
+        if self.use_local_mode:
+            return None
+        return os.getenv("REDIS_URL") or self.redis_url
 
 
 @lru_cache()
